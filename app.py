@@ -88,7 +88,7 @@ def handle_text_message(event):
     user_message = event.message.text.strip()
     
     if user_message == "你好":
-        reply_text = "你好！我是你的股票助手 📈"
+        reply_text = "你好！我是你的股票助手 📈 (版本2.0)"
     elif user_message == "測試":
         reply_text = "測試成功！Bot 正常運作中 ✅"
     elif user_message in ["週報", "简化", "簡化"]:
@@ -125,3 +125,4 @@ def handle_text_message(event):
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+

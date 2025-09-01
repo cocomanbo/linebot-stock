@@ -38,130 +38,125 @@ handler = WebhookHandler(channel_secret)
 cache = {}
 cache_timeout = 300  # 5分鐘緩存
 
-class StockService:
-    """股票數據服務"""
+def format_stock_message(stock_data):
+    """改良的股票訊息格式化"""
+    if not stock_data:
+        return "❌ 無法獲取股票數據，請稍後再試"
     
-    @staticmethod
-    def get_stock_info(symbol, max_retries=2):
-        """取得股票資訊，帶重試機制"""
-        cache_key = f"stock_{symbol}"
-        current_time = time.time()
-        
-        # 檢查緩存
-        if cache_key in cache:
-            data, timestamp = cache[cache_key]
-            if current_time - timestamp < cache_timeout:
-                logger.info(f"📦 使用緩存數據: {symbol}")
-                return data
-        
-        # 嘗試獲取新數據
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"🔄 嘗試獲取 {symbol} 數據 (第{attempt+1}次)")
-                
-                # 使用不同的數據源
-                if symbol.endswith('.TW'):
-                    # 台股
-                    result = StockService._get_tw_stock(symbol)
-                else:
-                    # 美股
-                    result = StockService._get_us_stock(symbol)
-                
-                if result:
-                    # 更新緩存
-                    cache[cache_key] = (result, current_time)
-                    logger.info(f"✅ 成功獲取 {symbol} 數據")
-                    return result
-                    
-            except Exception as e:
-                logger.error(f"❌ 第{attempt+1}次嘗試失敗: {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(1)  # 等待1秒後重試
-        
-        logger.error(f"❌ 所有嘗試都失敗: {symbol}")
-        return StockService._get_fallback_data(symbol)
+    # 選擇表情符號
+    if stock_data['change'] > 0:
+        change_emoji = "📈"
+        change_color = "🟢"
+    elif stock_data['change'] < 0:
+        change_emoji = "📉" 
+        change_color = "🔴"
+    else:
+        change_emoji = "➡️"
+        change_color = "⚪"
     
-    @staticmethod
-    def _get_tw_stock(symbol):
-        """獲取台股數據"""
-        try:
-            # 方法1: yfinance
-            ticker = yf.Ticker(symbol)
-            
-            # 設定較短的超時時間
-            info = ticker.info
-            hist = ticker.history(period="2d")  # 取得最近2天數據
-            
-            if not hist.empty:
-                current_price = hist['Close'].iloc[-1]
-                prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
-                change = current_price - prev_close
-                change_percent = (change / prev_close * 100) if prev_close else 0
-                
-                return {
-                    'symbol': symbol,
-                    'name': info.get('longName', symbol),
-                    'price': round(current_price, 2),
-                    'change': round(change, 2),
-                    'change_percent': round(change_percent, 2),
-                    'source': 'yfinance'
-                }
-        except Exception as e:
-            logger.warning(f"yfinance失敗: {str(e)}")
-        
-        return None
+    # 格式化漲跌
+    change_sign = "+" if stock_data['change'] >= 0 else ""
     
-    @staticmethod
-    def _get_us_stock(symbol):
-        """獲取美股數據"""
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
-            
-            current_price = info.get('currentPrice') or info.get('previousClose')
-            prev_close = info.get('previousClose', current_price)
-            
-            if current_price:
-                change = current_price - prev_close
-                change_percent = (change / prev_close * 100) if prev_close else 0
-                
-                return {
-                    'symbol': symbol,
-                    'name': info.get('longName', symbol),
-                    'price': round(current_price, 2),
-                    'change': round(change, 2),
-                    'change_percent': round(change_percent, 2),
-                    'source': 'yfinance'
-                }
-        except Exception as e:
-            logger.warning(f"美股數據獲取失敗: {str(e)}")
-        
-        return None
+    # 數據來源標記
+    source_indicators = {
+        'yfinance': "🌐 即時數據",
+        'twse': "🇹🇼 證交所",
+        'smart_fallback': "🤖 智能估算",
+        'fallback': "⚠️ 參考數據"
+    }
     
-    @staticmethod
-    def _get_fallback_data(symbol):
-        """備用模擬數據"""
-        logger.info(f"🔄 使用備用數據: {symbol}")
-        
-        # 根據股票代號提供不同的模擬數據
-        fallback_data = {
-            '2330.TW': {'name': '台積電', 'price': 575.0, 'change': 5.0, 'change_percent': 0.88},
-            'AAPL': {'name': 'Apple Inc.', 'price': 150.25, 'change': -2.15, 'change_percent': -1.41},
-            'TSLA': {'name': 'Tesla Inc.', 'price': 248.98, 'change': 12.45, 'change_percent': 5.26}
+    source_text = source_indicators.get(stock_data['source'], "📊 數據")
+    
+    # 市場狀態
+    market_state = ""
+    if 'market_state' in stock_data:
+        state_map = {
+            'REGULAR': "🟢 盤中",
+            'CLOSED': "🔴 收盤", 
+            'PRE': "🟡 盤前",
+            'POST': "🟠 盤後"
         }
+        if stock_data['market_state'] in state_map:
+            market_state = f"\n📊 狀態: {state_map[stock_data['market_state']]}"
+    
+    return f"""
+{change_emoji} {stock_data['name']} ({stock_data['symbol']})
+💰 價格: ${stock_data['price']}
+{change_color} 漲跌: {change_sign}{stock_data['change']} ({change_sign}{stock_data['change_percent']:.2f}%)
+⏰ 更新: {datetime.now().strftime('%H:%M:%S')}
+🔗 來源: {source_text}{market_state}
+""".strip()
+
+def generate_weekly_report():
+    """改良的週報生成"""
+    try:
+        # 取得主要股票數據
+        stocks_to_check = [
+            ('2330.TW', '台股代表'),
+            ('AAPL', '美股科技'),
+            ('TSLA', '電動車'),
+            ('NVDA', 'AI晶片')  # 新增熱門股票
+        ]
         
-        if symbol in fallback_data:
-            data = fallback_data[symbol]
-            return {
-                'symbol': symbol,
-                'name': data['name'],
-                'price': data['price'],
-                'change': data['change'],
-                'change_percent': data['change_percent'],
-                'source': 'fallback'
-            }
+        stock_reports = []
+        success_count = 0
         
-        return None
+        for symbol, category in stocks_to_check:
+            stock_data = StockService.get_stock_info(symbol)
+            if stock_data:
+                # 簡化版股票資訊用於週報
+                change_emoji = "📈" if stock_data['change'] >= 0 else "📉"
+                change_sign = "+" if stock_data['change'] >= 0 else ""
+                
+                report_line = f"{change_emoji} {stock_data['name']}: ${stock_data['price']} ({change_sign}{stock_data['change_percent']:.2f}%)"
+                stock_reports.append(report_line)
+                
+                if stock_data['source'] in ['yfinance', 'twse']:
+                    success_count += 1
+        
+        # 數據品質指示
+        data_quality = "🟢 即時數據" if success_count >= 2 else "🟡 混合數據" if success_count >= 1 else "🔴 參考數據"
+        
+        # 組合週報
+        week_start = (datetime.now() - timedelta(days=7)).strftime('%m/%d')
+        week_end = datetime.now().strftime('%m/%d')
+        
+        report = f"""
+📊 股市週報 ({week_start} - {week_end})
+{'='*30}
+
+📈 重點股票表現:
+{chr(10).join(stock_reports)}
+
+📰 本週關注重點:
+• 🏦 聯準會決議與利率走向
+• 💻 科技股財報季表現
+• 🌍 地緣政治風險評估
+• ⚡ AI與電動車產業動向
+
+💡 投資策略建議:
+• 📊 持續關注利率變化影響
+• 🔍 留意個股財報與獲利表現
+• 🛡️ 適度分散投資風險
+• 📈 關注長期成長趨勢
+
+📊 數據品質: {data_quality}
+⏰ 報告時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+        """.strip()
+        
+        return report
+        
+    except Exception as e:
+        logger.error(f"❌ 週報生成失敗: {str(e)}")
+        return f"""
+📊 股市週報
+⚠️ 報告生成時遇到問題
+
+🔧 系統狀態: 維護中
+📞 建議: 請稍後再試或使用個別股票查詢
+
+⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}
+        """.strip()
 
 def init_db():
     """初始化資料庫"""
@@ -203,57 +198,107 @@ def init_db():
         logger.error(f"❌ 資料庫初始化失敗: {str(e)}")
 
 def format_stock_message(stock_data):
-    """格式化股票訊息"""
+    """改良的股票訊息格式化"""
     if not stock_data:
-        return "❌ 無法獲取股票數據"
+        return "❌ 無法獲取股票數據，請稍後再試"
     
-    change_emoji = "📈" if stock_data['change'] >= 0 else "📉"
+    # 選擇表情符號
+    if stock_data['change'] > 0:
+        change_emoji = "📈"
+        change_color = "🟢"
+    elif stock_data['change'] < 0:
+        change_emoji = "📉" 
+        change_color = "🔴"
+    else:
+        change_emoji = "➡️"
+        change_color = "⚪"
+    
+    # 格式化漲跌
     change_sign = "+" if stock_data['change'] >= 0 else ""
     
-    source_text = "⚠️ [模擬數據]" if stock_data['source'] == 'fallback' else ""
+    # 數據來源標記
+    source_indicators = {
+        'yfinance': "🌐 即時數據",
+        'twse': "🇹🇼 證交所",
+        'smart_fallback': "🤖 智能估算",
+        'fallback': "⚠️ 參考數據"
+    }
+    
+    source_text = source_indicators.get(stock_data['source'], "📊 數據")
+    
+    # 市場狀態
+    market_state = ""
+    if 'market_state' in stock_data:
+        state_map = {
+            'REGULAR': "🟢 盤中",
+            'CLOSED': "🔴 收盤", 
+            'PRE': "🟡 盤前",
+            'POST': "🟠 盤後"
+        }
+        if stock_data['market_state'] in state_map:
+            market_state = f"\n📊 狀態: {state_map[stock_data['market_state']]}"
     
     return f"""
 {change_emoji} {stock_data['name']} ({stock_data['symbol']})
 💰 價格: ${stock_data['price']}
-📊 漲跌: {change_sign}{stock_data['change']} ({change_sign}{stock_data['change_percent']:.2f}%)
+{change_color} 漲跌: {change_sign}{stock_data['change']} ({change_sign}{stock_data['change_percent']:.2f}%)
 ⏰ 更新: {datetime.now().strftime('%H:%M:%S')}
-{source_text}
+🔗 來源: {source_text}{market_state}
 """.strip()
-
 def generate_weekly_report():
-    """生成週報"""
+    """改良的週報生成"""
     try:
         # 取得主要股票數據
-        stocks_to_check = ['2330.TW', 'AAPL', 'TSLA']
-        stock_reports = []
+        stocks_to_check = [
+            ('2330.TW', '台股代表'),
+            ('AAPL', '美股科技'),
+            ('TSLA', '電動車'),
+            ('NVDA', 'AI晶片')  # 新增熱門股票
+        ]
         
-        for symbol in stocks_to_check:
+        stock_reports = []
+        success_count = 0
+        
+        for symbol, category in stocks_to_check:
             stock_data = StockService.get_stock_info(symbol)
             if stock_data:
-                stock_reports.append(format_stock_message(stock_data))
+                # 簡化版股票資訊用於週報
+                change_emoji = "📈" if stock_data['change'] >= 0 else "📉"
+                change_sign = "+" if stock_data['change'] >= 0 else ""
+                
+                report_line = f"{change_emoji} {stock_data['name']}: ${stock_data['price']} ({change_sign}{stock_data['change_percent']:.2f}%)"
+                stock_reports.append(report_line)
+                
+                if stock_data['source'] in ['yfinance', 'twse']:
+                    success_count += 1
+        
+        # 數據品質指示
+        data_quality = "🟢 即時數據" if success_count >= 2 else "🟡 混合數據" if success_count >= 1 else "🔴 參考數據"
         
         # 組合週報
-        report_date = datetime.now().strftime('%Y-%m-%d')
         week_start = (datetime.now() - timedelta(days=7)).strftime('%m/%d')
         week_end = datetime.now().strftime('%m/%d')
         
         report = f"""
-📊 週報 ({week_start} - {week_end})
-{'='*25}
+📊 股市週報 ({week_start} - {week_end})
+{'='*30}
 
 📈 重點股票表現:
 {chr(10).join(stock_reports)}
 
-📰 本週重點:
-• 聯準會決議結果關注
-• 科技股財報季持續
-• 地緣政治風險評估
+📰 本週關注重點:
+- 🏦 聯準會決議與利率走向
+- 💻 科技股財報季表現
+- 🌍 地緣政治風險評估
+- ⚡ AI與電動車產業動向
 
-💡 投資建議:
-• 持續關注利率走向
-• 留意個股財報表現
-• 適度分散風險
+💡 投資策略建議:
+- 📊 持續關注利率變化影響
+- 🔍 留意個股財報與獲利表現
+- 🛡️ 適度分散投資風險
+- 📈 關注長期成長趨勢
 
+📊 數據品質: {data_quality}
 ⏰ 報告時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}
         """.strip()
         
@@ -261,7 +306,15 @@ def generate_weekly_report():
         
     except Exception as e:
         logger.error(f"❌ 週報生成失敗: {str(e)}")
-        return "❌ 週報生成失敗，請稍後再試"
+        return f"""
+📊 股市週報
+⚠️ 報告生成時遇到問題
+
+🔧 系統狀態: 維護中
+📞 建議: 請稍後再試或使用個別股票查詢
+
+⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}
+        """.strip()
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -449,3 +502,4 @@ if __name__ == "__main__":
     
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+

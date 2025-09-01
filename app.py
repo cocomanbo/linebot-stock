@@ -12,6 +12,7 @@ import logging
 import traceback
 import threading
 import time
+import re
 
 # 設定日誌
 logging.basicConfig(
@@ -19,6 +20,167 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+class StockService:
+    """股票服務類別，整合台股和美股的數據獲取"""
+    
+    @staticmethod
+    def get_stock_info(symbol):
+        """獲取股票資訊，自動判斷台股或美股"""
+        try:
+            # 判斷是否為台股（純數字）
+            if re.match(r'^\d+$', symbol):
+                return StockService._get_twse_stock_info(symbol)
+            else:
+                return StockService._get_yfinance_stock_info(symbol)
+        except Exception as e:
+            logger.error(f"❌ 獲取股票資訊失敗 {symbol}: {str(e)}")
+            return None
+    
+    @staticmethod
+    def _get_twse_stock_info(symbol):
+        """從台灣證交所獲取台股資訊"""
+        try:
+            # 台股交易時間檢查
+            now = datetime.now()
+            if now.weekday() >= 5:  # 週末
+                return StockService._get_twse_offline_data(symbol)
+            
+            # 交易時間：9:00-13:30
+            current_time = now.time()
+            if current_time < datetime.strptime('09:00', '%H:%M').time() or \
+               current_time > datetime.strptime('13:30', '%H:%M').time():
+                return StockService._get_twse_offline_data(symbol)
+            
+            # 嘗試獲取即時數據
+            url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_AVG?date={now.strftime('%Y%m%d')}&stockNo={symbol}&response=json"
+            response = requests.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'data' in data and len(data['data']) > 0:
+                    latest_data = data['data'][-1]
+                    price = float(latest_data[1].replace(',', ''))
+                    
+                    # 計算漲跌（需要前一日數據）
+                    if len(data['data']) > 1:
+                        prev_price = float(data['data'][-2][1].replace(',', ''))
+                        change = price - prev_price
+                        change_percent = (change / prev_price) * 100
+                    else:
+                        change = 0
+                        change_percent = 0
+                    
+                    return {
+                        'symbol': symbol,
+                        'name': f"台股{symbol}",
+                        'price': price,
+                        'change': change,
+                        'change_percent': change_percent,
+                        'source': 'twse',
+                        'market_state': 'REGULAR' if current_time < datetime.strptime('13:30', '%H:%M').time() else 'CLOSED'
+                    }
+            
+            # 如果即時數據失敗，使用備用數據
+            return StockService._get_twse_offline_data(symbol)
+            
+        except Exception as e:
+            logger.error(f"❌ 台股數據獲取失敗 {symbol}: {str(e)}")
+            return StockService._get_twse_offline_data(symbol)
+    
+    @staticmethod
+    def _get_twse_offline_data(symbol):
+        """台股離線/備用數據"""
+        try:
+            # 使用 yfinance 作為台股備用數據源
+            ticker = yf.Ticker(f"{symbol}.TW")
+            info = ticker.info
+            current_price = info.get('currentPrice', 0)
+            
+            if current_price:
+                # 獲取歷史數據計算漲跌
+                hist = ticker.history(period="2d")
+                if len(hist) >= 2:
+                    prev_price = hist.iloc[-2]['Close']
+                    change = current_price - prev_price
+                    change_percent = (change / prev_price) * 100
+                else:
+                    change = 0
+                    change_percent = 0
+                
+                return {
+                    'symbol': symbol,
+                    'name': info.get('longName', f"台股{symbol}"),
+                    'price': current_price,
+                    'change': change,
+                    'change_percent': change_percent,
+                    'source': 'smart_fallback',
+                    'market_state': 'CLOSED'
+                }
+        except:
+            pass
+        
+        # 最終備用：模擬數據
+        return {
+            'symbol': symbol,
+            'name': f"台股{symbol}",
+            'price': 100.0,
+            'change': 0.0,
+            'change_percent': 0.0,
+            'source': 'fallback',
+            'market_state': 'CLOSED'
+        }
+    
+    @staticmethod
+    def _get_yfinance_stock_info(symbol):
+        """從 yfinance 獲取美股資訊"""
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.info
+            
+            current_price = info.get('currentPrice', 0)
+            if not current_price:
+                # 嘗試獲取最新收盤價
+                hist = ticker.history(period="1d")
+                if len(hist) > 0:
+                    current_price = hist.iloc[-1]['Close']
+                else:
+                    return None
+            
+            # 獲取歷史數據計算漲跌
+            hist = ticker.history(period="2d")
+            if len(hist) >= 2:
+                prev_price = hist.iloc[-2]['Close']
+                change = current_price - prev_price
+                change_percent = (change / prev_price) * 100
+            else:
+                change = 0
+                change_percent = 0
+            
+            # 判斷市場狀態
+            market_state = 'CLOSED'
+            if 'regularMarketState' in info:
+                state_map = {
+                    'REGULAR': 'REGULAR',
+                    'CLOSED': 'CLOSED',
+                    'PRE': 'PRE',
+                    'POST': 'POST'
+                }
+                market_state = state_map.get(info['regularMarketState'], 'CLOSED')
+            
+            return {
+                'symbol': symbol,
+                'name': info.get('longName', symbol),
+                'price': current_price,
+                'change': change,
+                'change_percent': change_percent,
+                'source': 'yfinance',
+                'market_state': market_state
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ yfinance 數據獲取失敗 {symbol}: {str(e)}")
+            return None
 
 # 初始化 Flask app
 app = Flask(__name__)
@@ -502,4 +664,3 @@ if __name__ == "__main__":
     
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
-

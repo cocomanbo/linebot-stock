@@ -1,5 +1,7 @@
-# app.py - 極簡修復版
+# app.py
 import os
+import yfinance as yf
+import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
@@ -19,55 +21,114 @@ configuration = Configuration(
 )
 handler = WebhookHandler(os.getenv('LINE_CHANNEL_SECRET'))
 
-# 取得本週日期範圍
 def get_week_range():
     today = datetime.now()
     monday = today - timedelta(days=today.weekday())
     sunday = monday + timedelta(days=6)
     return f"{monday.strftime('%m/%d')}-{sunday.strftime('%m/%d')}"
 
-# 簡化版即時數據
-def get_simple_real_data():
-    """簡化版真實數據 - 只測試基本功能"""
+def get_real_stock_price(symbol):
+    """取得單一股票的即時價格"""
     try:
-        import yfinance as yf
-        
-        # 只抓台股，減少複雜度
-        ticker = yf.Ticker("^TWII")
-        hist = ticker.history(period="1d")
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period="2d")
         
         if hist.empty:
-            return "❌ 無法取得股市數據"
+            return None, f"無法取得 {symbol} 數據"
         
-        current_price = float(hist['Close'][-1])
-        return f"✅ 台股加權：{current_price:.2f} (測試成功)"
+        current = float(hist['Close'][-1])
         
-    except ImportError:
-        return "❌ yfinance 套件未安裝"
+        if len(hist) > 1:
+            previous = float(hist['Close'][-2])
+            change = current - previous
+            change_pct = (change / previous) * 100
+        else:
+            change = 0
+            change_pct = 0
+        
+        symbol_arrow = "▲" if change >= 0 else "▼"
+        
+        return current, f"{current:.2f} {symbol_arrow}{abs(change_pct):.1f}% ({change:+.2f}點)"
+        
     except Exception as e:
-        return f"❌ 錯誤：{str(e)}"
+        app.logger.error(f"取得 {symbol} 數據錯誤: {str(e)}")
+        return None, f"❌ {symbol} 數據取得失敗"
 
-# 生成簡化週報
-def generate_simple_report():
-    week_range = get_week_range()
-    
-    return f"""📈 簡化週報 ({week_range})
+def get_real_market_data():
+    """取得真實股市數據"""
+    try:
+        app.logger.info("開始取得股市數據...")
+        
+        # 台股加權指數
+        tw_price, tw_text = get_real_stock_price("^TWII")
+        
+        # 美股道瓊指數  
+        dow_price, dow_text = get_real_stock_price("^DJI")
+        
+        # 那斯達克指數
+        nasdaq_price, nasdaq_text = get_real_stock_price("^IXIC")
+        
+        result = f"""• 台股加權：{tw_text}
+• 美股道瓊：{dow_text}
+• 那斯達克：{nasdaq_text}"""
+        
+        app.logger.info(f"股市數據取得完成")
+        return result
+        
+    except Exception as e:
+        app.logger.error(f"取得股市數據總錯誤: {str(e)}")
+        return """• 台股加權：⚠️ 系統錯誤
+• 美股道瓊：⚠️ 系統錯誤
+• 那斯達克：⚠️ 系統錯誤"""
 
-🏛️ 數據測試
-{get_simple_real_data()}
+def get_real_forex_data():
+    """取得真實匯率數據"""
+    try:
+        url = "https://api.exchangerate-api.com/v4/latest/USD"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            return "• 匯率數據：⚠️ API 連線失敗"
+        
+        data = response.json()
+        usd_twd = data['rates']['TWD']
+        eur_usd = 1 / data['rates']['EUR']
+        
+        return f"""• 美元/台幣：{usd_twd:.2f}
+• 歐元/美元：{eur_usd:.4f}"""
+        
+    except Exception as e:
+        app.logger.error(f"匯率錯誤: {str(e)}")
+        return "• 匯率數據：❌ 取得失敗"
 
-💡 這是簡化測試版本
-輸入「診斷」查看詳細錯誤資訊
+def test_data_connection():
+    """測試 API 連線"""
+    try:
+        # 測試 yfinance
+        import yfinance
+        test_ticker = yf.Ticker("AAPL")
+        test_data = test_ticker.history(period="1d")
+        yf_status = "✅" if not test_data.empty else "❌"
+        
+        # 測試匯率 API
+        test_response = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=5)
+        forex_status = "✅" if test_response.status_code == 200 else "❌"
+        
+        return f"""🔧 連線測試結果
 
----
-🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')}"""
+📈 股市 API: {yf_status}
+💱 匯率 API: {forex_status}
+📦 yfinance 版本: {yfinance.__version__}
 
-# 健康檢查端點
+🕐 {datetime.now().strftime('%H:%M:%S')}"""
+        
+    except Exception as e:
+        return f"❌ 測試失敗: {str(e)}"
+
 @app.route("/")
 def hello():
     return "LINE Bot 正在運行中！"
 
-# Webhook 端點
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -82,37 +143,42 @@ def callback():
 
     return 'OK'
 
-# 處理訊息
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_text_message(event):
     user_message = event.message.text.strip()
     
     if user_message == "你好":
-        reply_text = "你好！我是你的股票助手 📈 (版本2.0)"
+        reply_text = "你好！我是你的股票助手 (版本2.0) 📈"
     elif user_message == "測試":
         reply_text = "測試成功！Bot 正常運作中 ✅"
-    elif user_message in ["週報", "简化", "簡化"]:
-        reply_text = generate_simple_report()
-    elif user_message in ["診斷", "debug", "錯誤"]:
-        reply_text = f"""🔧 診斷資訊
+    elif user_message == "功能":
+        reply_text = """目前可用功能：
+📝 輸入「你好」- 打招呼
+🧪 輸入「測試」- 測試連線  
+📋 輸入「功能」- 查看此說明
+📈 輸入「週報」- 即時經濟數據
+🔧 輸入「連線測試」- 檢查 API 狀態
+        
+更多功能開發中..."""
+    elif user_message in ["週報", "周報"]:
+        week_range = get_week_range()
+        reply_text = f"""📈 本週經濟週報 ({week_range})
 
-📦 Python 版本：{os.sys.version}
-📁 當前目錄：{os.getcwd()}
-🕐 伺服器時間：{datetime.now()}
+🏛️ 主要指數
+{get_real_market_data()}
 
-輸入「測試套件」檢查 yfinance 安裝"""
-    elif user_message in ["測試套件", "套件"]:
-        try:
-            import yfinance
-            reply_text = f"✅ yfinance 套件已安裝\n版本：{yfinance.__version__}"
-        except ImportError:
-            reply_text = "❌ yfinance 套件未安裝"
-        except Exception as e:
-            reply_text = f"⚠️ 套件檢查錯誤：{str(e)}"
+💱 匯率動態
+{get_real_forex_data()}
+
+---
+🕐 更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}"""
+        
+    elif user_message in ["連線測試", "測試連線"]:
+        reply_text = test_data_connection()
+        
     else:
-        reply_text = f"你說了：{user_message}\n\n可用指令：你好、週報、診斷、測試套件"
+        reply_text = f"你說了：{user_message}\n\n輸入「功能」查看可用指令"
 
-    # 回應訊息
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
         line_bot_api.reply_message(
@@ -125,4 +191,3 @@ def handle_text_message(event):
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
-

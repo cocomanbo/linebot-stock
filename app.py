@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # LINE Bot 設定
-channel_access_token = os.getenv('CHANNEL_ACCESS_TOKEN')
-channel_secret = os.getenv('CHANNEL_SECRET')
+channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN') or os.getenv('CHANNEL_ACCESS_TOKEN')
+channel_secret = os.getenv('LINE_CHANNEL_SECRET') or os.getenv('CHANNEL_SECRET')
 
 if not channel_access_token or not channel_secret:
     logger.error("❌ LINE Bot 環境變數未設定")

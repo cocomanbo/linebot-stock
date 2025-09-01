@@ -31,111 +31,183 @@ def get_week_range():
 
 # 真實股市數據
 def get_real_market_data():
-    """取得真實股市數據"""
+    """取得真實股市數據 - 加強錯誤處理"""
     try:
+        app.logger.info("開始取得股市數據...")
+        
         # 台股加權指數 (^TWII)
+        app.logger.info("取得台股數據...")
         taiwan = yf.Ticker("^TWII")
-        tw_hist = taiwan.history(period="5d")
-        tw_current = tw_hist['Close'][-1]
-        tw_previous = tw_hist['Close'][-2]
-        tw_change = tw_current - tw_previous
-        tw_change_pct = (tw_change / tw_previous) * 100
-        tw_symbol = "▲" if tw_change > 0 else "▼"
+        tw_hist = taiwan.history(period="2d")
+        
+        if tw_hist.empty:
+            app.logger.error("台股數據為空")
+            tw_text = "• 台股加權：❌ 數據取得失敗"
+        else:
+            tw_current = float(tw_hist['Close'][-1])
+            if len(tw_hist) > 1:
+                tw_previous = float(tw_hist['Close'][-2])
+                tw_change = tw_current - tw_previous
+                tw_change_pct = (tw_change / tw_previous) * 100
+            else:
+                tw_change = 0
+                tw_change_pct = 0
+            
+            tw_symbol = "▲" if tw_change >= 0 else "▼"
+            tw_text = f"• 台股加權：{tw_current:.2f} {tw_symbol}{abs(tw_change_pct):.1f}% ({tw_change:+.2f}點)"
+            app.logger.info(f"台股數據取得成功：{tw_current}")
         
         # 美股道瓊指數 (^DJI)
+        app.logger.info("取得道瓊數據...")
         dow = yf.Ticker("^DJI")
-        dow_hist = dow.history(period="5d")
-        dow_current = dow_hist['Close'][-1]
-        dow_previous = dow_hist['Close'][-2]
-        dow_change = dow_current - dow_previous
-        dow_change_pct = (dow_change / dow_previous) * 100
-        dow_symbol = "▲" if dow_change > 0 else "▼"
+        dow_hist = dow.history(period="2d")
+        
+        if dow_hist.empty:
+            app.logger.error("道瓊數據為空")
+            dow_text = "• 美股道瓊：❌ 數據取得失敗"
+        else:
+            dow_current = float(dow_hist['Close'][-1])
+            if len(dow_hist) > 1:
+                dow_previous = float(dow_hist['Close'][-2])
+                dow_change = dow_current - dow_previous
+                dow_change_pct = (dow_change / dow_previous) * 100
+            else:
+                dow_change = 0
+                dow_change_pct = 0
+            
+            dow_symbol = "▲" if dow_change >= 0 else "▼"
+            dow_text = f"• 美股道瓊：{dow_current:.2f} {dow_symbol}{abs(dow_change_pct):.1f}% ({dow_change:+.2f}點)"
+            app.logger.info(f"道瓊數據取得成功：{dow_current}")
         
         # 那斯達克指數 (^IXIC)
+        app.logger.info("取得那斯達克數據...")
         nasdaq = yf.Ticker("^IXIC")
-        nasdaq_hist = nasdaq.history(period="5d")
-        nasdaq_current = nasdaq_hist['Close'][-1]
-        nasdaq_previous = nasdaq_hist['Close'][-2]
-        nasdaq_change = nasdaq_current - nasdaq_previous
-        nasdaq_change_pct = (nasdaq_change / nasdaq_previous) * 100
-        nasdaq_symbol = "▲" if nasdaq_change > 0 else "▼"
+        nasdaq_hist = nasdaq.history(period="2d")
         
-        return f"""• 台股加權：{tw_current:.0f} {tw_symbol}{abs(tw_change_pct):.1f}% ({tw_change:+.0f}點)
-• 美股道瓊：{dow_current:.0f} {dow_symbol}{abs(dow_change_pct):.1f}% ({dow_change:+.0f}點)
-• 那斯達克：{nasdaq_current:.0f} {nasdaq_symbol}{abs(nasdaq_change_pct):.1f}% ({nasdaq_change:+.0f}點)"""
+        if nasdaq_hist.empty:
+            app.logger.error("那斯達克數據為空")
+            nasdaq_text = "• 那斯達克：❌ 數據取得失敗"
+        else:
+            nasdaq_current = float(nasdaq_hist['Close'][-1])
+            if len(nasdaq_hist) > 1:
+                nasdaq_previous = float(nasdaq_hist['Close'][-2])
+                nasdaq_change = nasdaq_current - nasdaq_previous
+                nasdaq_change_pct = (nasdaq_change / nasdaq_previous) * 100
+            else:
+                nasdaq_change = 0
+                nasdaq_change_pct = 0
+            
+            nasdaq_symbol = "▲" if nasdaq_change >= 0 else "▼"
+            nasdaq_text = f"• 那斯達克：{nasdaq_current:.2f} {nasdaq_symbol}{abs(nasdaq_change_pct):.1f}% ({nasdaq_change:+.2f}點)"
+            app.logger.info(f"那斯達克數據取得成功：{nasdaq_current}")
+        
+        return f"""{tw_text}
+{dow_text}
+{nasdaq_text}"""
         
     except Exception as e:
-        app.logger.error(f"取得股市數據錯誤: {e}")
-        return """• 台股加權：數據取得中...
-• 美股道瓊：數據取得中...
-• 那斯達克：數據取得中..."""
+        app.logger.error(f"取得股市數據發生錯誤: {str(e)}")
+        return """• 台股加權：⚠️ 網路連線問題
+• 美股道瓊：⚠️ 網路連線問題
+• 那斯達克：⚠️ 網路連線問題
 
-# 真實匯率數據
+🔄 請稍後重試或檢查網路連線"""
+
+# 真實匯率數據 - 改進版
 def get_real_forex_data():
-    """取得真實匯率數據"""
+    """取得真實匯率數據 - 加強錯誤處理"""
     try:
+        app.logger.info("開始取得匯率數據...")
+        
         # 使用免費的匯率 API
         url = "https://api.exchangerate-api.com/v4/latest/USD"
         response = requests.get(url, timeout=10)
+        
+        if response.status_code != 200:
+            app.logger.error(f"匯率API回應錯誤: {response.status_code}")
+            return """• 美元/台幣：⚠️ API 連線失敗
+• 歐元/美元：⚠️ API 連線失敗"""
+        
         data = response.json()
         
-        usd_twd = data['rates']['TWD']
-        eur_usd = 1 / data['rates']['EUR']
+        if 'rates' not in data:
+            app.logger.error("匯率數據格式錯誤")
+            return """• 美元/台幣：⚠️ 數據格式錯誤
+• 歐元/美元：⚠️ 數據格式錯誤"""
         
-        # 簡化的變化計算（實際應該比較前一天）
-        usd_twd_change = "+0.3"  # 這裡應該要實際計算
-        eur_usd_change = "-0.2"  # 這裡應該要實際計算
+        usd_twd = data['rates'].get('TWD', 0)
+        eur_rate = data['rates'].get('EUR', 0)
         
-        return f"""• 美元/台幣：{usd_twd:.2f} ▲{usd_twd_change}%
-• 歐元/美元：{eur_usd:.4f} ▼{eur_usd_change[1:]}%"""
+        if usd_twd == 0 or eur_rate == 0:
+            app.logger.error("匯率數據缺失")
+            return """• 美元/台幣：⚠️ 匯率數據缺失
+• 歐元/美元：⚠️ 匯率數據缺失"""
+        
+        eur_usd = 1 / eur_rate
+        
+        app.logger.info(f"匯率數據取得成功: USD/TWD={usd_twd}, EUR/USD={eur_usd}")
+        
+        # 注意：這裡沒有歷史比較，所以暫不顯示漲跌
+        return f"""• 美元/台幣：{usd_twd:.2f}
+• 歐元/美元：{eur_usd:.4f}"""
+        
+    except requests.exceptions.Timeout:
+        app.logger.error("匯率API請求超時")
+        return """• 美元/台幣：⏱️ 請求超時
+• 歐元/美元：⏱️ 請求超時"""
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"匯率API請求錯誤: {str(e)}")
+        return """• 美元/台幣：🌐 網路連線問題
+• 歐元/美元：🌐 網路連線問題"""
+    except Exception as e:
+        app.logger.error(f"取得匯率數據發生未知錯誤: {str(e)}")
+        return """• 美元/台幣：❌ 未知錯誤
+• 歐元/美元：❌ 未知錯誤"""
+
+# 測試數據連線功能
+def test_data_connection():
+    """測試數據連線狀況"""
+    try:
+        # 測試股市 API
+        app.logger.info("測試 yfinance 連線...")
+        test_ticker = yf.Ticker("AAPL")
+        test_data = test_ticker.history(period="1d")
+        stock_status = "✅ 正常" if not test_data.empty else "❌ 異常"
+        
+        # 測試匯率 API
+        app.logger.info("測試匯率 API 連線...")
+        test_url = "https://api.exchangerate-api.com/v4/latest/USD"
+        test_response = requests.get(test_url, timeout=5)
+        forex_status = "✅ 正常" if test_response.status_code == 200 else "❌ 異常"
+        
+        return f"""🔧 數據連線測試
+
+📈 股市數據 (Yahoo Finance): {stock_status}
+💱 匯率數據 (ExchangeRate API): {forex_status}
+
+🕐 測試時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
         
     except Exception as e:
-        app.logger.error(f"取得匯率數據錯誤: {e}")
-        return """• 美元/台幣：數據取得中...
-• 歐元/美元：數據取得中..."""
+        app.logger.error(f"連線測試錯誤: {str(e)}")
+        return f"❌ 連線測試失敗: {str(e)}"
 
-# 真實新聞數據（簡化版）
+# 真實新聞數據（暫時簡化）
 def get_real_news():
     """取得財經新聞摘要"""
-    try:
-        # 這裡可以整合 NewsAPI 或其他新聞源
-        # 目前先提供台灣常見的財經新聞格式
-        news_items = [
-            "台積電公布月營收，AI 晶片需求持續強勁",
-            "央行總裁談話，暗示利率政策方向",
-            "國際油價波動，影響通膨預期"
-        ]
-        
-        formatted_news = []
-        for i, news in enumerate(news_items, 1):
-            formatted_news.append(f"• {news}")
-        
-        return "\n".join(formatted_news)
-        
-    except Exception as e:
-        app.logger.error(f"取得新聞數據錯誤: {e}")
-        return """• 財經新聞取得中...
-• 請稍後再試..."""
+    # 暫時提供靜態新聞，後續可整合真實新聞 API
+    return """• 主要股市持續關注 Fed 利率政策走向
+• 科技股表現受到市場景氣預期影響
+• 國際油價波動影響通膨預期心理"""
 
-# 重要事件（可以整合經濟日曆 API）
+# 重要事件
 def get_real_upcoming_events():
     """取得下週重要經濟事件"""
-    try:
-        next_week = datetime.now() + timedelta(weeks=1)
-        base_date = next_week.strftime("%m/%d")
-        
-        # 這裡可以整合經濟日曆 API
-        events = [
-            f"{base_date} 美國重要經濟數據發布",
-            f"{(next_week + timedelta(1)).strftime('%m/%d')} 台股法說會密集期",
-            f"{(next_week + timedelta(2)).strftime('%m/%d')} Fed 官員重要談話"
-        ]
-        
-        return "\n".join([f"• {event}" for event in events])
-        
-    except Exception as e:
-        app.logger.error(f"取得事件數據錯誤: {e}")
-        return "• 重要事件取得中..."
+    next_week = datetime.now() + timedelta(weeks=1)
+    base_date = next_week.strftime("%m/%d")
+    
+    return f"""• {base_date} 重要經濟數據發布日
+• {(next_week + timedelta(1)).strftime('%m/%d')} 企業財報公布密集期
+• {(next_week + timedelta(2)).strftime('%m/%d')} 央行政策相關會議"""
 
 # 生成真實週報的主函數
 def generate_real_weekly_report():
@@ -200,6 +272,7 @@ def handle_text_message(event):
 🧪 輸入「測試」- 測試連線
 📋 輸入「功能」- 查看此說明
 📈 輸入「週報」- 查看本週經濟報告 (即時數據)
+🔧 輸入「連線測試」- 檢查數據來源狀態
 🔍 輸入「模擬」- 預覽模擬數據格式
         
 更多功能開發中... 🚀"""
@@ -207,6 +280,9 @@ def handle_text_message(event):
     # 週報功能
     elif user_message in ["週報", "周報", "即時週報", "real"]:
         reply_text = generate_real_weekly_report()
+    
+    elif user_message in ["連線測試", "測試連線", "狀態檢查", "debug"]:
+        reply_text = test_data_connection()
     
     elif user_message in ["模擬", "預覽", "demo"]:
         # 保留原來的模擬數據功能作為對比
@@ -218,6 +294,7 @@ def handle_text_message(event):
 📊 週報功能：
 • 「週報」- 即時經濟數據週報
 • 「模擬」- 模擬數據格式預覽
+• 「連線測試」- 檢查數據來源
 
 💡 數據來源：
 • 股市：Yahoo Finance 即時數據
@@ -246,28 +323,28 @@ def handle_text_message(event):
 # 模擬數據函數（保留作為對比）
 def get_mock_market_data():
     """模擬股市數據"""
-    return """• 台股加權：17,234 ▲1.2% (+205點)
-• 美股道瓊：34,567 ▼0.8% (-278點)  
-• 那斯達克：13,456 ▲0.5% (+67點)"""
+    return """• 台股加權：17,234 ▲1.2% (+205點) [模擬]
+• 美股道瓊：34,567 ▼0.8% (-278點) [模擬]
+• 那斯達克：13,456 ▲0.5% (+67點) [模擬]"""
 
 def get_mock_forex_data():
     """模擬匯率數據"""
-    return """• 美元/台幣：31.25 ▲0.3%
-• 歐元/美元：1.0845 ▼0.2%"""
+    return """• 美元/台幣：31.25 ▲0.3% [模擬]
+• 歐元/美元：1.0845 ▼0.2% [模擬]"""
 
 def get_mock_news():
     """模擬新聞數據"""
-    return """• 台積電Q2營收創新高，上調全年展望
-• Fed暗示可能降息，市場樂觀看待
-• 油價本週上漲3.2%，通膨壓力增加"""
+    return """• 台積電Q2營收創新高，上調全年展望 [模擬]
+• Fed暗示可能降息，市場樂觀看待 [模擬]
+• 油價本週上漲3.2%，通膨壓力增加 [模擬]"""
 
 def get_mock_upcoming_events():
     """模擬下週重要事件"""
     next_week = datetime.now() + timedelta(weeks=1)
     base_date = next_week.strftime("%m/%d")
-    return f"""• {base_date} 美國GDP數據公布
-• {(next_week + timedelta(1)).strftime("%m/%d")} 台股除息高峰期
-• {(next_week + timedelta(2)).strftime("%m/%d")} 歐洲央行利率決議"""
+    return f"""• {base_date} 美國GDP數據公布 [模擬]
+• {(next_week + timedelta(1)).strftime("%m/%d")} 台股除息高峰期 [模擬]
+• {(next_week + timedelta(2)).strftime("%m/%d")} 歐洲央行利率決議 [模擬]"""
 
 def generate_mock_weekly_report():
     """生成模擬數據週報"""

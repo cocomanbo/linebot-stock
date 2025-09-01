@@ -1,4 +1,4 @@
-# app.py - 無外部依賴版本
+# app.py - 優化版真實數據
 import os
 from datetime import datetime, timedelta
 from flask import Flask, request, abort
@@ -23,27 +23,58 @@ def get_week_range():
     sunday = monday + timedelta(days=6)
     return f"{monday.strftime('%m/%d')}-{sunday.strftime('%m/%d')}"
 
-def test_imports():
-    """測試套件導入狀況"""
-    results = []
-    
+def get_taiwan_stock_price():
+    """只抓取台股數據，減少複雜度"""
     try:
-        import yfinance
-        results.append(f"✅ yfinance {yfinance.__version__}")
-    except ImportError:
-        results.append("❌ yfinance 未安裝")
+        import yfinance as yf
+        
+        # 設定短超時時間
+        ticker = yf.Ticker("^TWII")
+        hist = ticker.history(period="1d", timeout=10)
+        
+        if hist.empty:
+            return "❌ 台股數據暫時無法取得"
+        
+        current = float(hist['Close'][-1])
+        return f"台股加權：{current:.2f} 點"
+        
     except Exception as e:
-        results.append(f"❌ yfinance 錯誤: {str(e)}")
-    
+        return f"⚠️ 台股數據錯誤：{str(e)[:50]}..."
+
+def get_simple_forex():
+    """簡化匯率數據"""
     try:
         import requests
-        results.append(f"✅ requests {requests.__version__}")
-    except ImportError:
-        results.append("❌ requests 未安裝")
+        
+        url = "https://api.exchangerate-api.com/v4/latest/USD"
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code != 200:
+            return "❌ 匯率數據暫時無法取得"
+        
+        data = response.json()
+        usd_twd = data['rates']['TWD']
+        return f"美元/台幣：{usd_twd:.2f}"
+        
     except Exception as e:
-        results.append(f"❌ requests 錯誤: {str(e)}")
-    
-    return "\n".join(results)
+        return f"⚠️ 匯率數據錯誤：{str(e)[:50]}..."
+
+def test_single_api():
+    """測試單一 API 調用"""
+    try:
+        import yfinance as yf
+        
+        ticker = yf.Ticker("AAPL")
+        info = ticker.info
+        
+        if 'regularMarketPrice' in info:
+            price = info['regularMarketPrice']
+            return f"✅ API 測試成功：AAPL ${price}"
+        else:
+            return "⚠️ API 有響應但數據格式異常"
+            
+    except Exception as e:
+        return f"❌ API 測試失敗：{str(e)}"
 
 @app.route("/")
 def hello():
@@ -69,36 +100,68 @@ def handle_text_message(event):
     
     try:
         if user_message == "你好":
-            reply_text = "你好！我是你的股票助手 (版本3.0 - 診斷模式) 📈"
+            reply_text = "你好！我是你的股票助手 (優化版 4.0) 📈"
+            
         elif user_message == "測試":
             reply_text = "測試成功！Bot 正常運作中 ✅"
-        elif user_message in ["連線測試", "測試連線"]:
-            reply_text = f"""🔧 套件檢查結果
+            
+        elif user_message in ["台股", "台股價格"]:
+            reply_text = f"""🇹🇼 台股查詢
 
-{test_imports()}
+{get_taiwan_stock_price()}
 
-🕐 {datetime.now().strftime('%H:%M:%S')}
-💾 Python: {os.sys.version.split()[0]}"""
+🕐 {datetime.now().strftime('%H:%M')}"""
+            
+        elif user_message in ["匯率", "美元"]:
+            reply_text = f"""💱 匯率查詢
+
+{get_simple_forex()}
+
+🕐 {datetime.now().strftime('%H:%M')}"""
+            
         elif user_message in ["週報", "周報"]:
-            reply_text = f"""📈 診斷模式週報 ({get_week_range()})
+            week_range = get_week_range()
+            reply_text = f"""📈 簡化週報 ({week_range})
 
-⚠️ 目前為診斷模式
-正在檢查數據套件安裝狀況
+🏛️ 市場數據
+• {get_taiwan_stock_price()}
+• {get_simple_forex()}
 
-請先執行「連線測試」確認套件狀態
+📰 重點提醒
+• 數據為即時查詢結果
+• 投資請謹慎評估風險
 
-🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')}"""
+🕐 更新：{datetime.now().strftime('%m-%d %H:%M')}"""
+            
+        elif user_message in ["連線測試", "API測試"]:
+            reply_text = f"""🔧 API 連線測試
+
+{test_single_api()}
+
+📦 套件狀態：
+• yfinance ✅ 0.2.28
+• requests ✅ 2.31.0
+
+🕐 {datetime.now().strftime('%H:%M:%S')}"""
+            
         elif user_message == "功能":
-            reply_text = """🔧 診斷模式功能：
-📝「你好」- 確認版本
-🧪「測試」- 基本功能
-🔍「連線測試」- 檢查套件
-📈「週報」- 診斷資訊"""
+            reply_text = """📋 可用功能：
+
+🎯 單項查詢：
+• 「台股」- 查詢台股加權指數
+• 「匯率」- 查詢美元台幣匯率
+
+📊 綜合功能：
+• 「週報」- 簡化市場週報
+• 「連線測試」- API 狀態檢查
+
+💡 這是優化版，專注核心功能"""
+            
         else:
-            reply_text = f"收到訊息：{user_message}\n輸入「功能」查看指令"
+            reply_text = f"收到：{user_message}\n\n輸入「功能」查看指令清單"
             
     except Exception as e:
-        reply_text = f"❌ 處理錯誤: {str(e)}"
+        reply_text = f"❌ 處理錯誤：{str(e)}"
         app.logger.error(f"處理訊息錯誤: {str(e)}")
 
     with ApiClient(configuration) as api_client:

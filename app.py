@@ -7,12 +7,13 @@ from linebot.v3.messaging import Configuration, ApiClient, MessagingApi, ReplyMe
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 import yfinance as yf
 import requests
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta
 import logging
 import traceback
 import threading
 import time
 import re
+import pytz
 
 # 設定日誌
 logging.basicConfig(
@@ -20,6 +21,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# 設定時區
+tz = pytz.timezone('Asia/Taipei')
 
 class StockService:
     """股票服務類別，整合台股和美股的數據獲取"""
@@ -34,15 +38,15 @@ class StockService:
             else:
                 return StockService._get_yfinance_stock_info(symbol)
         except Exception as e:
-            logger.error(f"獲取股票資訊失敗 {symbol}: {str(e)}")
+            logger.error(f"❌ 獲取股票資訊失敗 {symbol}: {str(e)}")
             return None
     
     @staticmethod
     def _get_twse_stock_info(symbol):
         """從台灣證交所獲取台股資訊"""
         try:
-            # 台股交易時間檢查
-            now = datetime.now()
+            # 台股交易時間檢查（使用台北時區）
+            now = datetime.now(tz)
             if now.weekday() >= 5:  # 週末
                 return StockService._get_twse_offline_data(symbol)
             
@@ -54,7 +58,7 @@ class StockService:
             
             # 嘗試獲取即時數據
             url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_AVG?date={now.strftime('%Y%m%d')}&stockNo={symbol}&response=json"
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=5)
             
             if response.status_code == 200:
                 data = response.json()
@@ -72,7 +76,7 @@ class StockService:
                         change_percent = 0
                     
                     return {
-                        'symbol': f"{symbol}.TW",
+                        'symbol': symbol,
                         'name': f"台股{symbol}",
                         'price': price,
                         'change': change,
@@ -85,7 +89,7 @@ class StockService:
             return StockService._get_twse_offline_data(symbol)
             
         except Exception as e:
-            logger.error(f"台股數據獲取失敗 {symbol}: {str(e)}")
+            logger.error(f"❌ 台股數據獲取失敗 {symbol}: {str(e)}")
             return StockService._get_twse_offline_data(symbol)
     
     @staticmethod
@@ -109,7 +113,7 @@ class StockService:
                     change_percent = 0
                 
                 return {
-                    'symbol': f"{symbol}.TW",
+                    'symbol': symbol,
                     'name': info.get('longName', f"台股{symbol}"),
                     'price': current_price,
                     'change': change,
@@ -120,16 +124,8 @@ class StockService:
         except:
             pass
         
-        # 最終備用：模擬數據
-        return {
-            'symbol': f"{symbol}.TW",
-            'name': f"台股{symbol}",
-            'price': 100.0,
-            'change': 0.0,
-            'change_percent': 0.0,
-            'source': 'fallback',
-            'market_state': 'CLOSED'
-        }
+        # 如果 yfinance 也失敗，告知用戶連線失敗
+        return None
     
     @staticmethod
     def _get_yfinance_stock_info(symbol):
@@ -179,489 +175,8 @@ class StockService:
             }
             
         except Exception as e:
-            logger.error(f"yfinance 數據獲取失敗 {symbol}: {str(e)}")
+            logger.error(f"❌ yfinance 數據獲取失敗 {symbol}: {str(e)}")
             return None
-
-
-class TradingTimeChecker:
-    """交易時間檢查器"""
-    
-    @staticmethod
-    def is_taiwan_trading_time():
-        """檢查是否為台股交易時間"""
-        now = datetime.now()
-        
-        # 週末不交易
-        if now.weekday() >= 5:  # 5=Saturday, 6=Sunday
-            return False
-        
-        # 交易時間：09:00-13:30
-        current_time = now.time()
-        market_open = dt_time(9, 0)
-        market_close = dt_time(13, 30)
-        
-        return market_open <= current_time <= market_close
-    
-    @staticmethod
-    def is_us_trading_time():
-        """檢查是否為美股交易時間（簡化版）"""
-        now = datetime.now()
-        
-        # 週末不交易
-        if now.weekday() >= 5:
-            return False
-        
-        # 美股時間複雜，這裡簡化處理
-        # 實際應該考慮美國時區和夏令時間
-        current_time = now.time()
-        # 台灣時間 21:30-04:00 (次日)
-        return current_time >= dt_time(21, 30) or current_time <= dt_time(4, 0)
-
-
-class StockAlertManager:
-    """股票價格提醒管理器"""
-    
-    def __init__(self, db_path='stock_bot.db'):
-        self.db_path = db_path
-        self.cooldown_hours = 1  # 冷卻時間
-        self.init_alert_tables()
-    
-    def init_alert_tables(self):
-        """初始化提醒相關資料表"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 提醒設定表
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS price_alerts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    target_price INTEGER NOT NULL,
-                    alert_type TEXT NOT NULL,
-                    is_active BOOLEAN DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    triggered_at TIMESTAMP NULL
-                )
-            ''')
-            
-            # 提醒記錄表
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS alert_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    target_price INTEGER NOT NULL,
-                    current_price REAL NOT NULL,
-                    alert_type TEXT NOT NULL,
-                    triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            conn.commit()
-            conn.close()
-            logger.info("提醒系統資料表初始化完成")
-            
-        except Exception as e:
-            logger.error(f"提醒系統初始化失敗: {str(e)}")
-    
-    def add_price_alert(self, user_id: str, symbol: str, target_price: int, alert_type: str) -> dict:
-        """新增價格提醒"""
-        try:
-            # 標準化股票代號
-            symbol = self._normalize_symbol(symbol)
-            
-            # 驗證股票存在
-            stock_data = StockService.get_stock_info(symbol)
-            if not stock_data:
-                return {'success': False, 'message': f'找不到股票: {symbol}'}
-            
-            # 檢查是否有相同設定的冷卻期
-            if self._is_in_cooldown(user_id, symbol, target_price, alert_type):
-                return {'success': False, 'message': f'{symbol} 相同條件在冷卻期內，請稍後再設定'}
-            
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 新增提醒設定
-            cursor.execute('''
-                INSERT INTO price_alerts (user_id, symbol, target_price, alert_type)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, symbol, target_price, alert_type))
-            
-            conn.commit()
-            conn.close()
-            
-            action_text = "買進" if alert_type == "buy" else "賣出"
-            
-            logger.info(f"用戶 {user_id} 設定價格提醒: {symbol} {target_price} {action_text}")
-            
-            return {
-                'success': True,
-                'message': f'已設定提醒: {stock_data["name"]} ({symbol})\n價格: ${target_price}\n動作: {action_text}\n僅在交易時間內觸發'
-            }
-            
-        except Exception as e:
-            logger.error(f"新增價格提醒失敗: {str(e)}")
-            return {'success': False, 'message': '設定提醒失敗，請稍後再試'}
-    
-    def get_user_alerts(self, user_id: str) -> list:
-        """取得用戶的價格提醒清單"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT symbol, target_price, alert_type, created_at, is_active
-                FROM price_alerts 
-                WHERE user_id = ? AND is_active = 1
-                ORDER BY created_at DESC
-            ''', (user_id,))
-            
-            alerts = []
-            for row in cursor.fetchall():
-                symbol, target_price, alert_type, created_at, is_active = row
-                
-                # 獲取股票資訊
-                stock_data = StockService.get_stock_info(symbol)
-                stock_name = stock_data['name'] if stock_data else symbol
-                
-                alerts.append({
-                    'symbol': symbol,
-                    'name': stock_name,
-                    'target_price': target_price,
-                    'alert_type': alert_type,
-                    'created_at': created_at,
-                    'is_active': is_active
-                })
-            
-            conn.close()
-            return alerts
-            
-        except Exception as e:
-            logger.error(f"取得提醒清單失敗: {str(e)}")
-            return []
-    
-    def remove_all_alerts(self, user_id: str) -> dict:
-        """移除用戶所有提醒"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 計算移除數量
-            cursor.execute('SELECT COUNT(*) FROM price_alerts WHERE user_id = ? AND is_active = 1', (user_id,))
-            count = cursor.fetchone()[0]
-            
-            if count == 0:
-                conn.close()
-                return {'success': False, 'message': '沒有設定任何提醒'}
-            
-            # 將所有提醒設為非活躍
-            cursor.execute('''
-                UPDATE price_alerts 
-                SET is_active = 0, triggered_at = CURRENT_TIMESTAMP 
-                WHERE user_id = ? AND is_active = 1
-            ''', (user_id,))
-            
-            conn.commit()
-            conn.close()
-            
-            logger.info(f"用戶 {user_id} 取消了 {count} 個提醒")
-            
-            return {
-                'success': True,
-                'message': f'已取消 {count} 個價格提醒'
-            }
-            
-        except Exception as e:
-            logger.error(f"取消所有提醒失敗: {str(e)}")
-            return {'success': False, 'message': '取消提醒失敗，請稍後再試'}
-    
-    def check_price_alerts(self):
-        """檢查所有價格提醒（背景執行）"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 取得所有活躍的提醒
-            cursor.execute('''
-                SELECT id, user_id, symbol, target_price, alert_type
-                FROM price_alerts 
-                WHERE is_active = 1
-            ''')
-            
-            alerts = cursor.fetchall()
-            triggered_alerts = []
-            
-            for alert_id, user_id, symbol, target_price, alert_type in alerts:
-                # 檢查交易時間
-                if symbol.endswith('.TW'):
-                    if not TradingTimeChecker.is_taiwan_trading_time():
-                        continue
-                else:
-                    if not TradingTimeChecker.is_us_trading_time():
-                        continue
-                
-                # 獲取即時股價（不使用快取）
-                stock_data = self._get_fresh_stock_data(symbol)
-                if not stock_data:
-                    continue
-                
-                current_price = stock_data['price']
-                triggered = False
-                
-                # 判斷是否觸發
-                if alert_type == 'buy' and current_price <= target_price:
-                    triggered = True
-                elif alert_type == 'sell' and current_price >= target_price:
-                    triggered = True
-                
-                if triggered:
-                    # 記錄觸發
-                    self._trigger_alert(alert_id, user_id, symbol, target_price, current_price, alert_type)
-                    triggered_alerts.append({
-                        'user_id': user_id,
-                        'symbol': symbol,
-                        'target_price': target_price,
-                        'current_price': current_price,
-                        'alert_type': alert_type,
-                        'stock_data': stock_data
-                    })
-            
-            conn.close()
-            
-            # 發送提醒通知
-            for alert in triggered_alerts:
-                self._send_alert_notification(alert)
-                
-            if triggered_alerts:
-                logger.info(f"觸發了 {len(triggered_alerts)} 個價格提醒")
-                
-        except Exception as e:
-            logger.error(f"檢查價格提醒時發生錯誤: {str(e)}")
-    
-    def _normalize_symbol(self, symbol: str) -> str:
-        """標準化股票代號"""
-        symbol = symbol.upper().strip()
-        
-        # 台股處理
-        if symbol.isdigit() and len(symbol) == 4:
-            symbol = f"{symbol}.TW"
-        
-        return symbol
-    
-    def _is_in_cooldown(self, user_id: str, symbol: str, target_price: int, alert_type: str) -> bool:
-        """檢查是否在冷卻期內"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cooldown_time = datetime.now() - timedelta(hours=self.cooldown_hours)
-            
-            cursor.execute('''
-                SELECT COUNT(*) FROM alert_history
-                WHERE user_id = ? AND symbol = ? AND target_price = ? AND alert_type = ?
-                AND triggered_at > ?
-            ''', (user_id, symbol, target_price, alert_type, cooldown_time))
-            
-            count = cursor.fetchone()[0]
-            conn.close()
-            
-            return count > 0
-            
-        except Exception as e:
-            logger.error(f"檢查冷卻期失敗: {str(e)}")
-            return False
-    
-    def _get_fresh_stock_data(self, symbol: str):
-        """獲取新鮮的股票數據（不使用快取）"""
-        try:
-            # 直接調用 StockService，不使用 cache
-            return StockService.get_stock_info(symbol)
-        except Exception as e:
-            logger.error(f"獲取新鮮股票數據失敗 {symbol}: {str(e)}")
-            return None
-    
-    def _trigger_alert(self, alert_id: int, user_id: str, symbol: str, target_price: int, current_price: float, alert_type: str):
-        """觸發提醒"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 將提醒設為非活躍（單次提醒）
-            cursor.execute('''
-                UPDATE price_alerts 
-                SET is_active = 0, triggered_at = CURRENT_TIMESTAMP 
-                WHERE id = ?
-            ''', (alert_id,))
-            
-            # 記錄到提醒歷史
-            cursor.execute('''
-                INSERT INTO alert_history (user_id, symbol, target_price, current_price, alert_type)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, symbol, target_price, current_price, alert_type))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"觸發提醒記錄失敗: {str(e)}")
-    
-    def _send_alert_notification(self, alert: dict):
-        """發送提醒通知給用戶"""
-        try:
-            if not channel_access_token or not configuration:
-                logger.error("LINE Bot 未初始化，無法發送提醒")
-                return
-            
-            user_id = alert['user_id']
-            stock_data = alert['stock_data']
-            target_price = alert['target_price']
-            current_price = alert['current_price']
-            alert_type = alert['alert_type']
-            
-            action_text = "買進時機" if alert_type == "buy" else "賣出時機"
-            
-            message = f"""
-價格提醒觸發！
-
-{stock_data['name']} ({stock_data['symbol']})
-目標價格: ${target_price}
-當前價格: ${current_price}
-建議動作: {action_text}
-
-觸發時間: {datetime.now().strftime('%H:%M:%S')}
-此提醒已自動停用
-            """.strip()
-            
-            with ApiClient(configuration) as api_client:
-                line_bot_api = MessagingApi(api_client)
-                line_bot_api.push_message_with_http_info(
-                    PushMessageRequest(
-                        to=user_id,
-                        messages=[TextMessage(text=message)]
-                    )
-                )
-            
-            logger.info(f"價格提醒通知已發送給用戶 {user_id}")
-            
-        except Exception as e:
-            logger.error(f"發送提醒通知失敗: {str(e)}")
-
-
-class CommandParser:
-    """指令解析器"""
-    
-    @staticmethod
-    def parse_command(message: str) -> dict:
-        """解析用戶指令"""
-        message = message.strip()
-        
-        # 追蹤指令：追蹤 股票代號 價格 買進/賣出
-        track_pattern = r'^追蹤\s+(\w+)\s+(\d+)\s+(買進|賣出)$'
-        match = re.match(track_pattern, message)
-        if match:
-            symbol, price, action = match.groups()
-            action_type = "buy" if action == "買進" else "sell"
-            return {
-                'action': 'add_price_alert',
-                'symbol': symbol,
-                'target_price': int(price),
-                'alert_type': action_type
-            }
-        
-        # 其他指令
-        command_map = {
-            '我的提醒': {'action': 'list_alerts'},
-            '提醒清單': {'action': 'list_alerts'},
-            '取消全部': {'action': 'cancel_all_alerts'},
-            '取消所有提醒': {'action': 'cancel_all_alerts'}
-        }
-        
-        if message in command_map:
-            return command_map[message]
-        
-        return {'action': 'unknown'}
-
-
-def format_alert_list_message(alerts: list) -> str:
-    """格式化提醒清單訊息"""
-    if not alerts:
-        return """
-我的價格提醒
-
-目前沒有設定任何提醒
-輸入指令格式：追蹤 股票代號 價格 買進/賣出
-
-範例：
-• 追蹤 2330 800 買進
-• 追蹤 AAPL 200 賣出
-
-注意：僅支援整數價格，僅在交易時間觸發
-        """.strip()
-    
-    alert_lines = []
-    for alert in alerts:
-        action_text = "買進" if alert['alert_type'] == 'buy' else "賣出"
-        
-        line = f"{alert['name']} ({alert['symbol']})"
-        line += f"\n   ${alert['target_price']} {action_text}"
-        alert_lines.append(line)
-    
-    return f"""
-我的價格提醒 (共 {len(alerts)} 個)
-{'='*25}
-
-{chr(10).join(alert_lines)}
-
-說明：
-• 觸發後自動停用（單次提醒）
-• 僅在交易時間內生效
-• 相同設定有 1 小時冷卻期
-
-更新: {datetime.now().strftime('%H:%M:%S')}
-    """.strip()
-
-
-# 背景監控執行緒
-class BackgroundMonitor:
-    """背景監控執行緒"""
-    
-    def __init__(self):
-        self.alert_manager = StockAlertManager()
-        self.running = False
-        self.thread = None
-    
-    def start_monitoring(self):
-        """開始背景監控"""
-        if self.running:
-            return
-        
-        self.running = True
-        self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.thread.start()
-        logger.info("背景價格監控已啟動")
-    
-    def stop_monitoring(self):
-        """停止背景監控"""
-        self.running = False
-        if self.thread:
-            self.thread.join()
-        logger.info("背景價格監控已停止")
-    
-    def _monitor_loop(self):
-        """監控循環"""
-        while self.running:
-            try:
-                # 每分鐘檢查一次價格提醒
-                self.alert_manager.check_price_alerts()
-                time.sleep(60)  # 等待1分鐘
-                
-            except Exception as e:
-                logger.error(f"背景監控循環錯誤: {str(e)}")
-                time.sleep(60)  # 發生錯誤也等待1分鐘
-
 
 # 初始化 Flask app
 app = Flask(__name__)
@@ -671,7 +186,7 @@ channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN') or os.getenv('CHAN
 channel_secret = os.getenv('LINE_CHANNEL_SECRET') or os.getenv('CHANNEL_SECRET')
 
 if not channel_access_token or not channel_secret:
-    logger.error("LINE Bot 環境變數未設定")
+    logger.error("❌ LINE Bot 環境變數未設定")
     raise ValueError("CHANNEL_ACCESS_TOKEN and CHANNEL_SECRET must be set")
 
 configuration = Configuration(access_token=channel_access_token)
@@ -681,52 +196,10 @@ handler = WebhookHandler(channel_secret)
 cache = {}
 cache_timeout = 300  # 5分鐘緩存
 
-# 全局背景監控器
-background_monitor = BackgroundMonitor()
-
-def init_db():
-    """初始化資料庫"""
-    try:
-        conn = sqlite3.connect('stock_bot.db')
-        cursor = conn.cursor()
-        
-        # 創建用戶追蹤表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_stocks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                alert_price REAL,
-                alert_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, symbol)
-            )
-        ''')
-        
-        # 創建提醒記錄表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                alert_price REAL NOT NULL,
-                current_price REAL NOT NULL,
-                alert_type TEXT NOT NULL,
-                triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        logger.info("資料庫初始化完成")
-        
-    except Exception as e:
-        logger.error(f"資料庫初始化失敗: {str(e)}")
-
 def format_stock_message(stock_data):
     """改良的股票訊息格式化"""
     if not stock_data:
-        return "數據連線中斷，請稍後再試"
+        return "❌ 目前金融數據連線失敗，請稍後再試"
     
     # 選擇表情符號
     if stock_data['change'] > 0:
@@ -746,8 +219,7 @@ def format_stock_message(stock_data):
     source_indicators = {
         'yfinance': "🌐 即時數據",
         'twse': "🇹🇼 證交所",
-        'smart_fallback': "🤖 智能估算",
-        'fallback': "⚠️ 參考數據"
+        'smart_fallback': "🤖 智能估算"
     }
     
     source_text = source_indicators.get(stock_data['source'], "📊 數據")
@@ -768,7 +240,7 @@ def format_stock_message(stock_data):
 {change_emoji} {stock_data['name']} ({stock_data['symbol']})
 💰 價格: ${stock_data['price']}
 {change_color} 漲跌: {change_sign}{stock_data['change']} ({change_sign}{stock_data['change_percent']:.2f}%)
-⏰ 更新: {datetime.now().strftime('%H:%M:%S')}
+⏰ 更新: {datetime.now(tz).strftime('%H:%M:%S')}
 🔗 來源: {source_text}{market_state}
 """.strip()
 
@@ -777,10 +249,10 @@ def generate_weekly_report():
     try:
         # 取得主要股票數據
         stocks_to_check = [
-            ('2330', '台股代表'),
+            ('2330', '台股代表'),  # 自動加上 .TW
             ('AAPL', '美股科技'),
             ('TSLA', '電動車'),
-            ('NVDA', 'AI晶片')
+            ('NVDA', 'AI晶片')  # 新增熱門股票
         ]
         
         stock_reports = []
@@ -803,8 +275,9 @@ def generate_weekly_report():
         data_quality = "🟢 即時數據" if success_count >= 2 else "🟡 混合數據" if success_count >= 1 else "🔴 參考數據"
         
         # 組合週報
-        week_start = (datetime.now() - timedelta(days=7)).strftime('%m/%d')
-        week_end = datetime.now().strftime('%m/%d')
+        now = datetime.now(tz)
+        week_start = (now - timedelta(days=7)).strftime('%m/%d')
+        week_end = now.strftime('%m/%d')
         
         report = f"""
 📊 股市週報 ({week_start} - {week_end})
@@ -826,13 +299,13 @@ def generate_weekly_report():
 • 📈 關注長期成長趨勢
 
 📊 數據品質: {data_quality}
-⏰ 報告時間: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+⏰ 報告時間: {now.strftime('%Y-%m-%d %H:%M')}
         """.strip()
         
         return report
         
     except Exception as e:
-        logger.error(f"週報生成失敗: {str(e)}")
+        logger.error(f"❌ 週報生成失敗: {str(e)}")
         return f"""
 📊 股市週報
 ⚠️ 報告生成時遇到問題
@@ -840,8 +313,257 @@ def generate_weekly_report():
 🔧 系統狀態: 維護中
 📞 建議: 請稍後再試或使用個別股票查詢
 
-⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}
+⏰ {datetime.now(tz).strftime('%Y-%m-%d %H:%M')}
         """.strip()
+
+def init_db():
+    """初始化資料庫"""
+    try:
+        conn = sqlite3.connect('stock_bot.db')
+        cursor = conn.cursor()
+        
+        # 創建股票追蹤表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_tracking (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                target_price REAL NOT NULL,
+                action TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                UNIQUE(user_id, symbol, target_price, action)
+            )
+        ''')
+        
+        # 創建股票提醒記錄表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS price_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                target_price REAL NOT NULL,
+                current_price REAL NOT NULL,
+                action TEXT NOT NULL,
+                triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        logger.info("✅ 資料庫初始化完成")
+        
+    except Exception as e:
+        logger.error(f"❌ 資料庫初始化失敗: {str(e)}")
+
+def add_stock_tracking(user_id, symbol, target_price, action):
+    """添加股票追蹤"""
+    try:
+        conn = sqlite3.connect('stock_bot.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO stock_tracking 
+            (user_id, symbol, target_price, action) 
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, symbol, target_price, action))
+        
+        conn.commit()
+        conn.close()
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ 添加股票追蹤失敗: {str(e)}")
+        return False
+
+def get_user_trackings(user_id):
+    """獲取用戶的股票追蹤列表"""
+    try:
+        conn = sqlite3.connect('stock_bot.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT symbol, target_price, action, created_at 
+            FROM stock_tracking 
+            WHERE user_id = ? AND is_active = 1
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        return [{'symbol': row[0], 'target_price': row[1], 'action': row[2], 'created_at': row[3]} for row in results]
+        
+    except Exception as e:
+        logger.error(f"❌ 獲取股票追蹤失敗: {str(e)}")
+        return []
+
+def remove_stock_tracking(user_id, symbol, target_price, action):
+    """移除股票追蹤"""
+    try:
+        conn = sqlite3.connect('stock_bot.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE stock_tracking 
+            SET is_active = 0 
+            WHERE user_id = ? AND symbol = ? AND target_price = ? AND action = ?
+        ''', (user_id, symbol, target_price, action))
+        
+        conn.commit()
+        conn.close()
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ 移除股票追蹤失敗: {str(e)}")
+        return False
+
+def remove_all_trackings(user_id):
+    """移除用戶的所有股票追蹤"""
+    try:
+        conn = sqlite3.connect('stock_bot.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE stock_tracking 
+            SET is_active = 0 
+            WHERE user_id = ?
+        ''', (user_id,))
+        
+        conn.commit()
+        conn.close()
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ 移除所有股票追蹤失敗: {str(e)}")
+        return False
+
+def check_price_alerts():
+    """檢查價格提醒"""
+    try:
+        conn = sqlite3.connect('stock_bot.db')
+        cursor = conn.cursor()
+        
+        # 獲取所有活躍的追蹤
+        cursor.execute('''
+            SELECT user_id, symbol, target_price, action 
+            FROM stock_tracking 
+            WHERE is_active = 1
+        ''')
+        
+        trackings = cursor.fetchall()
+        alerts = []
+        
+        for tracking in trackings:
+            user_id, symbol, target_price, action = tracking
+            
+            # 獲取當前股價
+            stock_data = StockService.get_stock_info(symbol)
+            if not stock_data:
+                continue
+            
+            current_price = stock_data['price']
+            triggered = False
+            
+            # 檢查是否觸發提醒
+            if action == '買進' and current_price <= target_price:
+                triggered = True
+            elif action == '賣出' and current_price >= target_price:
+                triggered = True
+            
+            if triggered:
+                # 記錄提醒
+                cursor.execute('''
+                    INSERT INTO price_alerts 
+                    (user_id, symbol, target_price, current_price, action) 
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, symbol, target_price, current_price, action))
+                
+                # 停用追蹤
+                cursor.execute('''
+                    UPDATE stock_tracking 
+                    SET is_active = 0 
+                    WHERE user_id = ? AND symbol = ? AND target_price = ? AND action = ?
+                ''', (user_id, symbol, target_price, action))
+                
+                alerts.append({
+                    'user_id': user_id,
+                    'symbol': symbol,
+                    'target_price': target_price,
+                    'current_price': current_price,
+                    'action': action
+                })
+        
+        conn.commit()
+        conn.close()
+        return alerts
+        
+    except Exception as e:
+        logger.error(f"❌ 檢查價格提醒失敗: {str(e)}")
+        return []
+
+def send_price_alert(user_id, alert_data):
+    """發送價格提醒"""
+    try:
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            
+            message = f"""
+🚨 價格提醒觸發！
+
+📊 {alert_data['symbol']} 已達到目標價格
+💰 目標: ${alert_data['target_price']}
+💵 當前: ${alert_data['current_price']}
+📈 動作: {alert_data['action']}
+
+⏰ 時間: {datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')}
+            """.strip()
+            
+            line_bot_api.push_message(
+                PushMessageRequest(
+                    to=user_id,
+                    messages=[TextMessage(text=message)]
+                )
+            )
+            
+            logger.info(f"✅ 價格提醒發送成功: {user_id} - {alert_data['symbol']}")
+            
+    except Exception as e:
+        logger.error(f"❌ 發送價格提醒失敗: {str(e)}")
+
+def price_check_scheduler():
+    """價格檢查排程器"""
+    while True:
+        try:
+            # 檢查是否為台股交易時間
+            now = datetime.now(tz)
+            is_trading_hours = (
+                now.weekday() < 5 and  # 工作日
+                now.time() >= datetime.strptime('09:00', '%H:%M').time() and
+                now.time() <= datetime.strptime('13:30', '%H:%M').time()
+            )
+            
+            if is_trading_hours:
+                logger.info("🔄 執行價格檢查...")
+                alerts = check_price_alerts()
+                
+                for alert in alerts:
+                    send_price_alert(alert['user_id'], alert)
+                    time.sleep(1)  # 避免發送過快
+                
+                if alerts:
+                    logger.info(f"✅ 處理了 {len(alerts)} 個價格提醒")
+                else:
+                    logger.info("✅ 價格檢查完成，無觸發提醒")
+            else:
+                logger.info("⏰ 非交易時間，跳過價格檢查")
+            
+            # 等待5分鐘
+            time.sleep(300)
+            
+        except Exception as e:
+            logger.error(f"❌ 價格檢查排程器錯誤: {str(e)}")
+            time.sleep(60)  # 錯誤時等待1分鐘
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -866,113 +588,124 @@ def handle_message(event):
     user_message = event.message.text.strip()
     user_id = event.source.user_id
     
-    logger.info(f"用戶 {user_id} 發送: {user_message}")
+    logger.info(f"👤 用戶 {user_id} 發送: {user_message}")
     
     try:
-        # 初始化管理器
-        alert_manager = StockAlertManager()
-        
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
             
-            # 解析指令
-            command = CommandParser.parse_command(user_message)
-            
-            if command['action'] == 'add_price_alert':
-                # 新增價格提醒
-                result = alert_manager.add_price_alert(
-                    user_id, 
-                    command['symbol'], 
-                    command['target_price'], 
-                    command['alert_type']
-                )
-                reply_text = result['message']
-                
-            elif command['action'] == 'list_alerts':
-                # 顯示提醒清單
-                alerts = alert_manager.get_user_alerts(user_id)
-                reply_text = format_alert_list_message(alerts)
-                
-            elif command['action'] == 'cancel_all_alerts':
-                # 取消所有提醒
-                result = alert_manager.remove_all_alerts(user_id)
-                reply_text = result['message']
-                
-            # 原有指令
-            elif user_message in ['你好', 'hello', 'hi']:
-                reply_text = "你好！我是股票監控機器人\n輸入「功能」查看可用指令"
+            # 處理不同指令
+            if user_message in ['你好', 'hello', 'hi']:
+                reply_text = "👋 你好！我是股票監控機器人\n輸入「功能」查看可用指令"
                 
             elif user_message == '功能':
-                alert_count = len(alert_manager.get_user_alerts(user_id))
-                reply_text = f"""
-可用功能：
-
-📊 股價查詢：
-• 「週報」- 本週股市報告
-• 「台股」- 台積電股價
-• 「美股」- Apple股價
-
-🚨 價格提醒：
-• 「追蹤 [代號] [價格] [買進/賣出]」
-• 「我的提醒」- 查看提醒清單
-• 「取消全部」- 取消所有提醒
-
-🔧 系統功能：
-• 「測試」- 系統狀態
-• 「診斷」- API診斷
-
-目前提醒: {alert_count} 個
-
-範例：追蹤 2330 800 買進
+                reply_text = """
+📱 可用功能:
+• 「週報」- 查看本週股市報告
+• 「台股」- 查看台積電股價
+• 「美股」- 查看Apple股價  
+• 「測試」- 系統狀態檢查
+• 「診斷」- API功能診斷
+• 「追蹤 2330 800 買進」- 設定股票價格提醒
+• 「我的追蹤」- 查看追蹤清單
+• 「取消追蹤 2330 800 買進」- 取消追蹤
+• 「取消全部」- 取消所有追蹤
                 """.strip()
                 
             elif user_message == '週報':
-                logger.info("生成週報中...")
+                logger.info("🔄 生成週報中...")
                 reply_text = generate_weekly_report()
                 
             elif user_message == '台股':
-                logger.info("查詢台積電...")
-                stock_data = StockService.get_stock_info('2330')
-                reply_text = format_stock_message(stock_data) if stock_data else "台積電數據連線中斷，請稍後再試"
+                logger.info("🔄 查詢台積電...")
+                stock_data = StockService.get_stock_info('2330')  # 自動加上 .TW
+                reply_text = format_stock_message(stock_data)
                 
             elif user_message == '美股':
-                logger.info("查詢Apple...")
+                logger.info("🔄 查詢Apple...")
                 stock_data = StockService.get_stock_info('AAPL')
-                reply_text = format_stock_message(stock_data) if stock_data else "Apple數據連線中斷，請稍後再試"
+                reply_text = format_stock_message(stock_data)
                 
             elif user_message == '測試':
-                alert_count = len(alert_manager.get_user_alerts(user_id))
-                is_taiwan_trading = TradingTimeChecker.is_taiwan_trading_time()
-                is_us_trading = TradingTimeChecker.is_us_trading_time()
-                
-                reply_text = f"""
-系統狀態：
-⏰ 時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-📦 緩存: {len(cache)} 項
-🚨 提醒: {alert_count} 個
-
-交易時間：
-🇹🇼 台股: {'🟢 開盤' if is_taiwan_trading else '🔴 休市'}
-🇺🇸 美股: {'🟢 開盤' if is_us_trading else '🔴 休市'}
-
-🔄 背景監控: {'運行中' if background_monitor.running else '未啟動'}
-                """.strip()
+                reply_text = f"✅ 系統正常運作\n⏰ 時間: {datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')}\n📦 緩存項目: {len(cache)}"
             
             elif user_message == '診斷':
-                # API診斷
+                # 簡化版診斷
                 try:
-                    test_stock = StockService.get_stock_info('2330')
+                    test_stock = StockService.get_stock_info('2330')  # 自動加上 .TW
                     if test_stock and test_stock['source'] in ['yfinance', 'twse']:
-                        reply_text = "API功能正常\n數據連線成功"
-                    elif test_stock:
-                        reply_text = f"API部分正常\n使用{test_stock['source']}數據"
+                        reply_text = "✅ API功能正常\n🔗 即時數據連線成功"
+                    elif test_stock and test_stock['source'] in ['smart_fallback']:
+                        reply_text = "⚠️ API功能異常\n🔄 使用備用數據模式"
                     else:
-                        reply_text = "API功能異常\n數據連線中斷"
+                        reply_text = "❌ API功能故障\n請稍後再試"
                 except Exception as e:
-                    reply_text = f"診斷失敗: {str(e)}"
+                    reply_text = f"❌ 診斷失敗: {str(e)}"
+            
+            elif user_message.startswith('追蹤 '):
+                # 處理股票追蹤指令
+                try:
+                    parts = user_message.split()
+                    if len(parts) >= 4:
+                        symbol = parts[1]
+                        target_price = float(parts[2])
+                        action = parts[3]
+                        
+                        if action in ['買進', '賣出']:
+                            if add_stock_tracking(user_id, symbol, target_price, action):
+                                reply_text = f"✅ 已設定追蹤 {symbol} {action} 提醒\n💰 目標價格: ${target_price}"
+                            else:
+                                reply_text = "❌ 設定追蹤失敗，請稍後再試"
+                        else:
+                            reply_text = "❌ 動作必須是「買進」或「賣出」\n💡 格式: 追蹤 2330 800 買進"
+                    else:
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 追蹤 2330 800 買進"
+                except ValueError:
+                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 追蹤 2330 800 買進"
+                except Exception as e:
+                    reply_text = f"❌ 設定追蹤失敗: {str(e)}"
+            
+            elif user_message == '我的追蹤':
+                # 顯示用戶的股票追蹤列表
+                trackings = get_user_trackings(user_id)
+                if trackings:
+                    tracking_list = []
+                    for tracking in trackings:
+                        tracking_list.append(f"📊 {tracking['symbol']}: ${tracking['target_price']} {tracking['action']}")
+                    
+                    reply_text = f"📋 您的股票追蹤清單:\n{chr(10).join(tracking_list)}"
+                else:
+                    reply_text = "📋 您目前沒有追蹤任何股票\n💡 使用「追蹤 2330 800 買進」來設定提醒"
+            
+            elif user_message.startswith('取消追蹤 '):
+                # 處理取消追蹤指令
+                try:
+                    parts = user_message.split()
+                    if len(parts) >= 4:
+                        symbol = parts[1]
+                        target_price = float(parts[2])
+                        action = parts[3]
+                        
+                        if remove_stock_tracking(user_id, symbol, target_price, action):
+                            reply_text = f"✅ 已取消追蹤 {symbol} {action} 提醒"
+                        else:
+                            reply_text = "❌ 取消追蹤失敗，請稍後再試"
+                    else:
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 取消追蹤 2330 800 買進"
+                except ValueError:
+                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 取消追蹤 2330 800 買進"
+                except Exception as e:
+                    reply_text = f"❌ 取消追蹤失敗: {str(e)}"
+            
+            elif user_message == '取消全部':
+                # 取消所有追蹤
+                if remove_all_trackings(user_id):
+                    reply_text = "✅ 已取消所有股票追蹤"
+                else:
+                    reply_text = "❌ 取消所有追蹤失敗，請稍後再試"
                 
             else:
-                reply_text = "不認識的指令\n輸入「功能」查看所有指令"
+                reply_text = "🤔 不認識的指令\n輸入「功能」查看可用指令"
             
             # 發送回覆
             line_bot_api.reply_message_with_http_info(
@@ -981,10 +714,10 @@ def handle_message(event):
                     messages=[TextMessage(text=reply_text)]
                 )
             )
-            logger.info("訊息發送成功")
+            logger.info("✅ 訊息發送成功")
             
     except Exception as e:
-        logger.error(f"處理訊息失敗: {str(e)}")
+        logger.error(f"❌ 處理訊息失敗: {str(e)}")
         traceback.print_exc()
 
 @app.route("/")
@@ -992,9 +725,8 @@ def home():
     return f"""
     <h1>LINE Bot 股票監控系統</h1>
     <p>狀態: ✅ 運行中</p>
-    <p>時間: {datetime.now()}</p>
+    <p>時間: {datetime.now(tz)}</p>
     <p>緩存項目: {len(cache)}</p>
-    <p>背景監控: {'✅ 運行中' if background_monitor.running else '❌ 未啟動'}</p>
     <p><a href="/debug">診斷頁面</a></p>
     """
 
@@ -1003,16 +735,15 @@ def health():
     """健康檢查端點"""
     return {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "cache_items": len(cache),
-        "background_monitor": background_monitor.running
+        "timestamp": datetime.now(tz).isoformat(),
+        "cache_items": len(cache)
     }
 
 @app.route("/debug")
 def debug_api():
     """診斷API功能的端點"""
     results = {
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'timestamp': datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S'),
         'tests': {}
     }
     
@@ -1048,7 +779,7 @@ def debug_api():
     
     # 測試股票服務
     try:
-        stock_data = StockService.get_stock_info('2330')
+        stock_data = StockService.get_stock_info('2330')  # 自動加上 .TW
         results['tests']['stock_service'] = {
             'status': 'success' if stock_data else 'no_data',
             'data': stock_data
@@ -1083,8 +814,10 @@ if __name__ == "__main__":
     logger.info("🚀 啟動 LINE Bot 股票監控系統...")
     init_db()
     
-    # 啟動背景價格監控
-    background_monitor.start_monitoring()
+    # 啟動價格檢查排程器
+    scheduler_thread = threading.Thread(target=price_check_scheduler, daemon=True)
+    scheduler_thread.start()
+    logger.info("✅ 價格檢查排程器已啟動")
     
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port, debug=False)

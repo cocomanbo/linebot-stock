@@ -53,6 +53,10 @@ class StockService:
                 if not result:
                     logger.info(f"🔄 美股 {symbol} yfinance 失敗，嘗試備用數據源")
                     result = StockService._get_fallback_stock_info(symbol)
+                # 如果備用數據源也失敗，返回通用備用數據
+                if not result:
+                    logger.warning(f"⚠️ 所有數據源都失敗，使用通用備用數據 {symbol}")
+                    result = StockService._get_fallback_stock_info(symbol)
                 return result
         except Exception as e:
             logger.error(f"❌ 獲取股票資訊失敗 {symbol}: {str(e)}")
@@ -319,16 +323,16 @@ class StockService:
         try:
             logger.info(f"🔄 使用備用數據源獲取 {symbol}")
             
-            # 常見股票的模擬數據
+            # 常見股票的模擬數據（更新價格）
             fallback_data = {
-                'AAPL': {'name': 'Apple Inc.', 'price': 180.50, 'change': 2.30, 'change_percent': 1.29},
-                'MSFT': {'name': 'Microsoft Corporation', 'price': 350.20, 'change': -1.80, 'change_percent': -0.51},
+                'AAPL': {'name': 'Apple Inc.', 'price': 227.71, 'change': 2.30, 'change_percent': 1.29},
+                'MSFT': {'name': 'Microsoft Corporation', 'price': 499.01, 'change': 0.60, 'change_percent': 0.12},
                 'GOOGL': {'name': 'Alphabet Inc.', 'price': 140.75, 'change': 0.95, 'change_percent': 0.68},
                 'AMZN': {'name': 'Amazon.com Inc.', 'price': 145.30, 'change': -0.45, 'change_percent': -0.31},
                 'TSLA': {'name': 'Tesla Inc.', 'price': 240.80, 'change': 5.20, 'change_percent': 2.21},
-                'NVDA': {'name': 'NVIDIA Corporation', 'price': 450.60, 'change': 12.40, 'change_percent': 2.83},
+                'NVDA': {'name': 'NVIDIA Corporation', 'price': 875.30, 'change': 15.40, 'change_percent': 1.79},
                 'META': {'name': 'Meta Platforms Inc.', 'price': 320.15, 'change': -2.10, 'change_percent': -0.65},
-                '2330': {'name': '台積電', 'price': 580.00, 'change': 5.00, 'change_percent': 0.87},
+                '2330': {'name': '台積電', 'price': 1225.00, 'change': 5.00, 'change_percent': 0.87},
                 '0050': {'name': '元大台灣50', 'price': 145.20, 'change': 0.80, 'change_percent': 0.55},
                 '2317': {'name': '鴻海', 'price': 105.50, 'change': -0.50, 'change_percent': -0.47}
             }
@@ -346,6 +350,7 @@ class StockService:
                 }
             else:
                 # 如果沒有預設數據，返回一個通用的模擬數據
+                logger.info(f"🔄 使用通用備用數據 {symbol}")
                 return {
                     'symbol': symbol,
                     'name': f"股票 {symbol}",
@@ -358,7 +363,16 @@ class StockService:
                 
         except Exception as e:
             logger.error(f"❌ 備用數據源獲取失敗 {symbol}: {e}")
-            return None
+            # 即使發生錯誤，也返回一個基本的數據結構
+            return {
+                'symbol': symbol,
+                'name': f"股票 {symbol}",
+                'price': 100.00,
+                'change': 0.00,
+                'change_percent': 0.00,
+                'source': 'fallback_emergency',
+                'market_state': 'CLOSED'
+            }
 
 # 初始化 Flask app
 app = Flask(__name__)
@@ -420,7 +434,8 @@ def format_stock_message(stock_data):
         'twse': "🇹🇼 證交所",
         'smart_fallback': "🤖 智能估算",
         'fallback_simulation': "📊 模擬數據",
-        'fallback_generic': "📈 參考數據"
+        'fallback_generic': "📈 參考數據",
+        'fallback_emergency': "🚨 緊急備用"
     }
     
     source_text = source_indicators.get(stock_data['source'], "📊 數據")

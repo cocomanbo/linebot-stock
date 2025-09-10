@@ -105,11 +105,117 @@ class StockService:
         try:
             # 使用 yfinance 作為台股備用數據源
             ticker = yf.Ticker(f"{symbol}.TW")
-            info = ticker.info
-            current_price = info.get('currentPrice', 0)
             
-            if current_price:
+            # 嘗試多種方式獲取台股數據
+            current_price = None
+            
+            # 方法1: 嘗試從 info 獲取
+            try:
+                info = ticker.info
+                current_price = info.get('currentPrice', 0)
+                if current_price and current_price > 0:
+                    logger.info(f"✅ 台股 {symbol} 從 info 獲取價格: {current_price}")
+            except Exception as e:
+                logger.warning(f"⚠️ 台股 {symbol} 從 info 獲取失敗: {e}")
+            
+            # 方法2: 嘗試從歷史數據獲取
+            if not current_price or current_price <= 0:
+                try:
+                    hist = ticker.history(period="1d")
+                    if len(hist) > 0:
+                        current_price = hist.iloc[-1]['Close']
+                        logger.info(f"✅ 台股 {symbol} 從歷史數據獲取價格: {current_price}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 台股 {symbol} 從歷史數據獲取失敗: {e}")
+            
+            # 方法3: 嘗試獲取更長時間的數據
+            if not current_price or current_price <= 0:
+                try:
+                    hist = ticker.history(period="5d")
+                    if len(hist) > 0:
+                        current_price = hist.iloc[-1]['Close']
+                        logger.info(f"✅ 台股 {symbol} 從5天歷史數據獲取價格: {current_price}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 台股 {symbol} 從5天歷史數據獲取失敗: {e}")
+            
+            if current_price and current_price > 0:
                 # 獲取歷史數據計算漲跌
+                try:
+                    hist = ticker.history(period="2d")
+                    if len(hist) >= 2:
+                        prev_price = hist.iloc[-2]['Close']
+                        change = current_price - prev_price
+                        change_percent = (change / prev_price) * 100
+                    else:
+                        change = 0
+                        change_percent = 0
+                except Exception as e:
+                    logger.warning(f"⚠️ 台股 {symbol} 計算漲跌失敗: {e}")
+                    change = 0
+                    change_percent = 0
+                
+                return {
+                    'symbol': symbol,
+                    'name': info.get('longName', f"台股{symbol}") if 'info' in locals() else f"台股{symbol}",
+                    'price': current_price,
+                    'change': change,
+                    'change_percent': change_percent,
+                    'source': 'smart_fallback',
+                    'market_state': 'CLOSED'
+                }
+            else:
+                logger.error(f"❌ 台股 {symbol} 無法獲取有效價格")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ 台股 {symbol} 備用數據獲取失敗: {e}")
+            traceback.print_exc()
+            return None
+    
+    @staticmethod
+    def _get_yfinance_stock_info(symbol):
+        """從 yfinance 獲取美股資訊"""
+        try:
+            ticker = yf.Ticker(symbol)
+            
+            # 嘗試多種方式獲取數據
+            current_price = None
+            
+            # 方法1: 嘗試從 info 獲取
+            try:
+                info = ticker.info
+                current_price = info.get('currentPrice', 0)
+                if current_price and current_price > 0:
+                    logger.info(f"✅ 從 info 獲取 {symbol} 價格: {current_price}")
+            except Exception as e:
+                logger.warning(f"⚠️ 從 info 獲取 {symbol} 失敗: {e}")
+            
+            # 方法2: 嘗試從歷史數據獲取
+            if not current_price or current_price <= 0:
+                try:
+                    hist = ticker.history(period="1d", interval="1m")
+                    if len(hist) > 0:
+                        current_price = hist.iloc[-1]['Close']
+                        logger.info(f"✅ 從歷史數據獲取 {symbol} 價格: {current_price}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 從歷史數據獲取 {symbol} 失敗: {e}")
+            
+            # 方法3: 嘗試獲取更長時間的數據
+            if not current_price or current_price <= 0:
+                try:
+                    hist = ticker.history(period="5d")
+                    if len(hist) > 0:
+                        current_price = hist.iloc[-1]['Close']
+                        logger.info(f"✅ 從5天歷史數據獲取 {symbol} 價格: {current_price}")
+                except Exception as e:
+                    logger.warning(f"⚠️ 從5天歷史數據獲取 {symbol} 失敗: {e}")
+            
+            if not current_price or current_price <= 0:
+                logger.error(f"❌ 無法獲取 {symbol} 的有效價格")
+                return None
+            
+            # 獲取歷史數據計算漲跌
+            try:
                 hist = ticker.history(period="2d")
                 if len(hist) >= 2:
                     prev_price = hist.iloc[-2]['Close']
@@ -118,62 +224,29 @@ class StockService:
                 else:
                     change = 0
                     change_percent = 0
-                
-                return {
-                    'symbol': symbol,
-                    'name': info.get('longName', f"台股{symbol}"),
-                    'price': current_price,
-                    'change': change,
-                    'change_percent': change_percent,
-                    'source': 'smart_fallback',
-                    'market_state': 'CLOSED'
-                }
-        except:
-            pass
-        
-        # 如果 yfinance 也失敗，告知用戶連線失敗
-        return None
-    
-    @staticmethod
-    def _get_yfinance_stock_info(symbol):
-        """從 yfinance 獲取美股資訊"""
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
-            
-            current_price = info.get('currentPrice', 0)
-            if not current_price:
-                # 嘗試獲取最新收盤價
-                hist = ticker.history(period="1d")
-                if len(hist) > 0:
-                    current_price = hist.iloc[-1]['Close']
-                else:
-                    return None
-            
-            # 獲取歷史數據計算漲跌
-            hist = ticker.history(period="2d")
-            if len(hist) >= 2:
-                prev_price = hist.iloc[-2]['Close']
-                change = current_price - prev_price
-                change_percent = (change / prev_price) * 100
-            else:
+            except Exception as e:
+                logger.warning(f"⚠️ 計算 {symbol} 漲跌失敗: {e}")
                 change = 0
                 change_percent = 0
             
             # 判斷市場狀態
             market_state = 'CLOSED'
-            if 'regularMarketState' in info:
-                state_map = {
-                    'REGULAR': 'REGULAR',
-                    'CLOSED': 'CLOSED',
-                    'PRE': 'PRE',
-                    'POST': 'POST'
-                }
-                market_state = state_map.get(info['regularMarketState'], 'CLOSED')
+            try:
+                info = ticker.info
+                if 'regularMarketState' in info:
+                    state_map = {
+                        'REGULAR': 'REGULAR',
+                        'CLOSED': 'CLOSED',
+                        'PRE': 'PRE',
+                        'POST': 'POST'
+                    }
+                    market_state = state_map.get(info['regularMarketState'], 'CLOSED')
+            except:
+                pass
             
             return {
                 'symbol': symbol,
-                'name': info.get('longName', symbol),
+                'name': info.get('longName', symbol) if 'info' in locals() else symbol,
                 'price': current_price,
                 'change': change,
                 'change_percent': change_percent,
@@ -183,6 +256,7 @@ class StockService:
             
         except Exception as e:
             logger.error(f"❌ yfinance 數據獲取失敗 {symbol}: {str(e)}")
+            traceback.print_exc()
             return None
 
 # 初始化 Flask app
@@ -211,7 +285,19 @@ cache_timeout = 300  # 5分鐘緩存
 def format_stock_message(stock_data):
     """改良的股票訊息格式化"""
     if not stock_data:
-        return "❌ 目前金融數據連線失敗，請稍後再試"
+        return """❌ 目前金融數據連線失敗
+
+🔧 可能原因:
+• 網路連線問題
+• 金融數據服務暫時不可用
+• 股票代碼不存在
+
+💡 建議:
+• 檢查網路連線
+• 稍後再試
+• 確認股票代碼正確
+
+⏰ 時間: """ + datetime.now(tz).strftime('%H:%M:%S')
     
     # 選擇表情符號
     if stock_data['change'] > 0:
@@ -725,15 +811,34 @@ def handle_message(event):
                 reply_text = f"✅ 系統正常運作\n⏰ 時間: {datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')}\n📦 緩存項目: {len(cache)}"
             
             elif user_message == '診斷':
-                # 簡化版診斷
+                # 詳細診斷功能
                 try:
-                    test_stock = StockService.get_stock_info('2330')  # 自動加上 .TW
-                    if test_stock and test_stock['source'] in ['yfinance', 'twse']:
-                        reply_text = "✅ API功能正常\n🔗 即時數據連線成功"
-                    elif test_stock and test_stock['source'] in ['smart_fallback']:
-                        reply_text = "⚠️ API功能異常\n🔄 使用備用數據模式"
+                    reply_text = "🔍 正在診斷系統狀態...\n\n"
+                    
+                    # 測試台股
+                    reply_text += "📊 測試台股 2330...\n"
+                    test_tw = StockService.get_stock_info('2330')
+                    if test_tw:
+                        reply_text += f"✅ 台股: {test_tw['source']} - ${test_tw['price']}\n"
                     else:
-                        reply_text = "❌ API功能故障\n請稍後再試"
+                        reply_text += "❌ 台股連線失敗\n"
+                    
+                    # 測試美股
+                    reply_text += "\n📊 測試美股 AAPL...\n"
+                    test_us = StockService.get_stock_info('AAPL')
+                    if test_us:
+                        reply_text += f"✅ 美股: {test_us['source']} - ${test_us['price']}\n"
+                    else:
+                        reply_text += "❌ 美股連線失敗\n"
+                    
+                    # 總結
+                    if test_tw or test_us:
+                        reply_text += "\n✅ 系統部分功能正常"
+                    else:
+                        reply_text += "\n❌ 系統連線異常，請檢查網路"
+                    
+                    reply_text += f"\n⏰ 診斷時間: {datetime.now(tz).strftime('%H:%M:%S')}"
+                    
                 except Exception as e:
                     reply_text = f"❌ 診斷失敗: {str(e)}"
             

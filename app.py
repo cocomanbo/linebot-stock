@@ -397,6 +397,9 @@ handler = WebhookHandler(channel_secret)
 cache = {}
 cache_timeout = 300  # 5分鐘緩存
 
+# 全局變數用於儲存股票追蹤（雲端環境的替代方案）
+stock_trackings = {}  # {user_id: [{'symbol': '2330', 'target_price': 1230, 'action': '買進', 'created_at': '2024-01-01'}]}
+
 def format_stock_message(stock_data):
     """改良的股票訊息格式化"""
     if not stock_data:
@@ -535,7 +538,17 @@ def generate_weekly_report():
 def init_db():
     """初始化資料庫"""
     try:
-        conn = sqlite3.connect('stock_bot.db')
+        # 在 Render 環境中使用記憶體資料庫
+        import os
+        if os.getenv('RENDER'):
+            # 雲端環境使用記憶體資料庫
+            conn = sqlite3.connect(':memory:')
+            logger.info("🌐 使用記憶體資料庫（雲端環境）")
+        else:
+            # 本地環境使用檔案資料庫
+            conn = sqlite3.connect('stock_bot.db')
+            logger.info("💻 使用檔案資料庫（本地環境）")
+        
         cursor = conn.cursor()
         
         # 創建股票追蹤表
@@ -575,18 +588,43 @@ def init_db():
 def add_stock_tracking(user_id, symbol, target_price, action):
     """添加股票追蹤"""
     try:
-        conn = sqlite3.connect('stock_bot.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO stock_tracking 
-            (user_id, symbol, target_price, action) 
-            VALUES (?, ?, ?, ?)
-        ''', (user_id, symbol, target_price, action))
-        
-        conn.commit()
-        conn.close()
-        return True
+        # 檢查是否為雲端環境
+        if os.getenv('RENDER'):
+            # 使用記憶體儲存
+            if user_id not in stock_trackings:
+                stock_trackings[user_id] = []
+            
+            # 檢查是否已存在相同的追蹤
+            for tracking in stock_trackings[user_id]:
+                if (tracking['symbol'] == symbol and 
+                    tracking['target_price'] == target_price and 
+                    tracking['action'] == action):
+                    return True  # 已存在，視為成功
+            
+            # 添加新的追蹤
+            tracking_data = {
+                'symbol': symbol,
+                'target_price': target_price,
+                'action': action,
+                'created_at': datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+            }
+            stock_trackings[user_id].append(tracking_data)
+            logger.info(f"✅ 記憶體追蹤添加成功: {user_id} - {symbol}")
+            return True
+        else:
+            # 本地環境使用資料庫
+            conn = sqlite3.connect('stock_bot.db')
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO stock_tracking 
+                (user_id, symbol, target_price, action) 
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, symbol, target_price, action))
+            
+            conn.commit()
+            conn.close()
+            return True
         
     except Exception as e:
         logger.error(f"❌ 添加股票追蹤失敗: {str(e)}")
@@ -595,20 +633,29 @@ def add_stock_tracking(user_id, symbol, target_price, action):
 def get_user_trackings(user_id):
     """獲取用戶的股票追蹤列表"""
     try:
-        conn = sqlite3.connect('stock_bot.db')
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT symbol, target_price, action, created_at 
-            FROM stock_tracking 
-            WHERE user_id = ? AND is_active = 1
-            ORDER BY created_at DESC
-        ''', (user_id,))
-        
-        results = cursor.fetchall()
-        conn.close()
-        
-        return [{'symbol': row[0], 'target_price': row[1], 'action': row[2], 'created_at': row[3]} for row in results]
+        # 檢查是否為雲端環境
+        if os.getenv('RENDER'):
+            # 使用記憶體儲存
+            if user_id in stock_trackings:
+                return stock_trackings[user_id]
+            else:
+                return []
+        else:
+            # 本地環境使用資料庫
+            conn = sqlite3.connect('stock_bot.db')
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT symbol, target_price, action, created_at 
+                FROM stock_tracking 
+                WHERE user_id = ? AND is_active = 1
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [{'symbol': row[0], 'target_price': row[1], 'action': row[2], 'created_at': row[3]} for row in results]
         
     except Exception as e:
         logger.error(f"❌ 獲取股票追蹤失敗: {str(e)}")

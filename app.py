@@ -1,6 +1,13 @@
 import os
 import sqlite3
 from flask import Flask, request, abort
+
+# 載入環境變數
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import Configuration, ApiClient, MessagingApi, ReplyMessageRequest, TextMessage, PushMessageRequest
@@ -185,9 +192,14 @@ app = Flask(__name__)
 channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN') or os.getenv('CHANNEL_ACCESS_TOKEN')
 channel_secret = os.getenv('LINE_CHANNEL_SECRET') or os.getenv('CHANNEL_SECRET')
 
-if not channel_access_token or not channel_secret:
-    logger.error("❌ LINE Bot 環境變數未設定")
-    raise ValueError("CHANNEL_ACCESS_TOKEN and CHANNEL_SECRET must be set")
+# 如果環境變數未設定，使用預設值
+if not channel_access_token:
+    channel_access_token = "PpSQF0Bo3FVHtT+XP8GrGAkPYVBvQPTFy69o/nr3+9iOZvUpg2XZ30MzbHKjdPHGximx0IAmfSKjjq64pSqRQsfujpFwgtNCFYXtJnJConGVse0d8008yY74Vo40YQ1K22xi4fDYn+TZD30wgIVz6QdB04t89/1O/w1cDnyilFU="
+
+if not channel_secret:
+    channel_secret = "2cef684f6f8a9d2ca4c5f0ac8cae531c"
+
+logger.info("✅ LINE Bot 憑證已載入")
 
 configuration = Configuration(access_token=channel_access_token)
 handler = WebhookHandler(channel_secret)
@@ -565,6 +577,71 @@ def price_check_scheduler():
             logger.error(f"❌ 價格檢查排程器錯誤: {str(e)}")
             time.sleep(60)  # 錯誤時等待1分鐘
 
+def weekly_report_scheduler():
+    """週報發送排程器 - 每週一早上8點發送"""
+    while True:
+        try:
+            now = datetime.now(tz)
+            
+            # 每週一早上8點發送週報
+            if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
+                logger.info("📊 執行週報發送...")
+                send_weekly_report_to_all_users()
+                
+                # 等待到下一分鐘，避免重複發送
+                time.sleep(60)
+            else:
+                # 每分鐘檢查一次
+                time.sleep(60)
+                
+        except Exception as e:
+            logger.error(f"❌ 週報排程器錯誤: {str(e)}")
+            time.sleep(300)  # 錯誤時等待5分鐘
+
+def send_weekly_report_to_all_users():
+    """向所有用戶發送週報"""
+    try:
+        # 獲取所有活躍用戶
+        conn = sqlite3.connect('stock_bot.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT DISTINCT user_id FROM stock_tracking 
+            WHERE is_active = 1
+        ''')
+        
+        users = cursor.fetchall()
+        conn.close()
+        
+        if not users:
+            logger.info("📊 沒有活躍用戶，跳過週報發送")
+            return
+        
+        # 生成週報
+        weekly_report = generate_weekly_report()
+        
+        # 發送給所有用戶
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            
+            for user in users:
+                try:
+                    line_bot_api.push_message(
+                        PushMessageRequest(
+                            to=user[0],
+                            messages=[TextMessage(text=weekly_report)]
+                        )
+                    )
+                    time.sleep(1)  # 避免發送過快
+                    logger.info(f"✅ 週報發送成功: {user[0]}")
+                except Exception as e:
+                    logger.error(f"❌ 週報發送失敗 {user[0]}: {str(e)}")
+        
+        logger.info(f"✅ 週報發送完成，共 {len(users)} 個用戶")
+        
+    except Exception as e:
+        logger.error(f"❌ 週報發送失敗: {str(e)}")
+
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers.get('X-Line-Signature', '')
@@ -602,8 +679,8 @@ def handle_message(event):
                 reply_text = """
 📱 可用功能:
 • 「週報」- 查看本週股市報告
-• 「台股」- 查看台積電股價
-• 「美股」- 查看Apple股價  
+• 「台股 2330」- 查看台股股價
+• 「美股 AAPL」- 查看美股股價  
 • 「測試」- 系統狀態檢查
 • 「診斷」- API功能診斷
 • 「追蹤 2330 800 買進」- 設定股票價格提醒
@@ -616,15 +693,33 @@ def handle_message(event):
                 logger.info("🔄 生成週報中...")
                 reply_text = generate_weekly_report()
                 
-            elif user_message == '台股':
-                logger.info("🔄 查詢台積電...")
-                stock_data = StockService.get_stock_info('2330')  # 自動加上 .TW
-                reply_text = format_stock_message(stock_data)
-                
-            elif user_message == '美股':
-                logger.info("🔄 查詢Apple...")
-                stock_data = StockService.get_stock_info('AAPL')
-                reply_text = format_stock_message(stock_data)
+            elif user_message.startswith('台股 '):
+                # 處理台股查詢：台股 2330
+                try:
+                    parts = user_message.split()
+                    if len(parts) >= 2:
+                        symbol = parts[1]
+                        logger.info(f"🔄 查詢台股 {symbol}...")
+                        stock_data = StockService.get_stock_info(symbol)
+                        reply_text = format_stock_message(stock_data)
+                    else:
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 台股 2330"
+                except Exception as e:
+                    reply_text = f"❌ 查詢台股失敗: {str(e)}"
+                    
+            elif user_message.startswith('美股 '):
+                # 處理美股查詢：美股 AAPL
+                try:
+                    parts = user_message.split()
+                    if len(parts) >= 2:
+                        symbol = parts[1].upper()  # 轉換為大寫
+                        logger.info(f"🔄 查詢美股 {symbol}...")
+                        stock_data = StockService.get_stock_info(symbol)
+                        reply_text = format_stock_message(stock_data)
+                    else:
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 美股 AAPL"
+                except Exception as e:
+                    reply_text = f"❌ 查詢美股失敗: {str(e)}"
                 
             elif user_message == '測試':
                 reply_text = f"✅ 系統正常運作\n⏰ 時間: {datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')}\n📦 緩存項目: {len(cache)}"
@@ -815,9 +910,14 @@ if __name__ == "__main__":
     init_db()
     
     # 啟動價格檢查排程器
-    scheduler_thread = threading.Thread(target=price_check_scheduler, daemon=True)
-    scheduler_thread.start()
+    price_scheduler_thread = threading.Thread(target=price_check_scheduler, daemon=True)
+    price_scheduler_thread.start()
     logger.info("✅ 價格檢查排程器已啟動")
+    
+    # 啟動週報發送排程器
+    weekly_scheduler_thread = threading.Thread(target=weekly_report_scheduler, daemon=True)
+    weekly_scheduler_thread.start()
+    logger.info("✅ 週報發送排程器已啟動")
     
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port, debug=False)

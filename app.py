@@ -659,7 +659,23 @@ def add_stock_tracking(user_id, symbol, target_price, action):
         
     except Exception as e:
         logger.error(f"❌ 添加股票追蹤失敗: {str(e)}")
-        return False
+        # 如果資料庫失敗，嘗試使用記憶體備用方案
+        try:
+            if user_id not in stock_trackings:
+                stock_trackings[user_id] = []
+            
+            tracking_data = {
+                'symbol': symbol,
+                'target_price': target_price,
+                'action': action,
+                'created_at': datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+            }
+            stock_trackings[user_id].append(tracking_data)
+            logger.info(f"✅ 使用記憶體備用方案添加追蹤: {user_id} - {symbol}")
+            return True
+        except Exception as backup_e:
+            logger.error(f"❌ 記憶體備用方案也失敗: {str(backup_e)}")
+            return False
 
 def get_user_trackings(user_id):
     """獲取用戶的股票追蹤列表"""
@@ -706,17 +722,31 @@ def get_user_trackings(user_id):
 def remove_stock_tracking(user_id, symbol, target_price, action):
     """移除股票追蹤"""
     try:
-        conn = sqlite3.connect('stock_bot.db')
+        conn, db_type = get_db_connection()
+        if not conn:
+            logger.error("❌ 無法獲取資料庫連接")
+            return False
+        
         cursor = conn.cursor()
         
-        cursor.execute('''
-            UPDATE stock_tracking 
-            SET is_active = 0 
-            WHERE user_id = ? AND symbol = ? AND target_price = ? AND action = ?
-        ''', (user_id, symbol, target_price, action))
+        if db_type == 'postgresql':
+            # PostgreSQL 語法
+            cursor.execute('''
+                UPDATE stock_tracking 
+                SET is_active = FALSE 
+                WHERE user_id = %s AND symbol = %s AND target_price = %s AND action = %s
+            ''', (user_id, symbol, target_price, action))
+        else:
+            # SQLite 語法
+            cursor.execute('''
+                UPDATE stock_tracking 
+                SET is_active = 0 
+                WHERE user_id = ? AND symbol = ? AND target_price = ? AND action = ?
+            ''', (user_id, symbol, target_price, action))
         
         conn.commit()
         conn.close()
+        logger.info(f"✅ 股票追蹤移除成功: {user_id} - {symbol}")
         return True
         
     except Exception as e:
@@ -726,17 +756,31 @@ def remove_stock_tracking(user_id, symbol, target_price, action):
 def remove_all_trackings(user_id):
     """移除用戶的所有股票追蹤"""
     try:
-        conn = sqlite3.connect('stock_bot.db')
+        conn, db_type = get_db_connection()
+        if not conn:
+            logger.error("❌ 無法獲取資料庫連接")
+            return False
+        
         cursor = conn.cursor()
         
-        cursor.execute('''
-            UPDATE stock_tracking 
-            SET is_active = 0 
-            WHERE user_id = ?
-        ''', (user_id,))
+        if db_type == 'postgresql':
+            # PostgreSQL 語法
+            cursor.execute('''
+                UPDATE stock_tracking 
+                SET is_active = FALSE 
+                WHERE user_id = %s
+            ''', (user_id,))
+        else:
+            # SQLite 語法
+            cursor.execute('''
+                UPDATE stock_tracking 
+                SET is_active = 0 
+                WHERE user_id = ?
+            ''', (user_id,))
         
         conn.commit()
         conn.close()
+        logger.info(f"✅ 所有股票追蹤移除成功: {user_id}")
         return True
         
     except Exception as e:
@@ -746,21 +790,36 @@ def remove_all_trackings(user_id):
 def check_price_alerts():
     """檢查價格提醒"""
     try:
-        conn = sqlite3.connect('stock_bot.db')
+        conn, db_type = get_db_connection()
+        if not conn:
+            logger.error("❌ 無法獲取資料庫連接")
+            return []
+        
         cursor = conn.cursor()
         
-        # 獲取所有活躍的追蹤
-        cursor.execute('''
-            SELECT user_id, symbol, target_price, action 
-            FROM stock_tracking 
-            WHERE is_active = 1
-        ''')
+        if db_type == 'postgresql':
+            # PostgreSQL 語法
+            cursor.execute('''
+                SELECT user_id, symbol, target_price, action 
+                FROM stock_tracking 
+                WHERE is_active = TRUE
+            ''')
+        else:
+            # SQLite 語法
+            cursor.execute('''
+                SELECT user_id, symbol, target_price, action 
+                FROM stock_tracking 
+                WHERE is_active = 1
+            ''')
         
         trackings = cursor.fetchall()
         alerts = []
         
         for tracking in trackings:
-            user_id, symbol, target_price, action = tracking
+            if db_type == 'postgresql':
+                user_id, symbol, target_price, action = tracking['user_id'], tracking['symbol'], tracking['target_price'], tracking['action']
+            else:
+                user_id, symbol, target_price, action = tracking
             
             # 獲取當前股價
             stock_data = StockService.get_stock_info(symbol)
@@ -778,18 +837,32 @@ def check_price_alerts():
             
             if triggered:
                 # 記錄提醒
-                cursor.execute('''
-                    INSERT INTO price_alerts 
-                    (user_id, symbol, target_price, current_price, action) 
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (user_id, symbol, target_price, current_price, action))
-                
-                # 停用追蹤
-                cursor.execute('''
-                    UPDATE stock_tracking 
-                    SET is_active = 0 
-                    WHERE user_id = ? AND symbol = ? AND target_price = ? AND action = ?
-                ''', (user_id, symbol, target_price, action))
+                if db_type == 'postgresql':
+                    cursor.execute('''
+                        INSERT INTO price_alerts 
+                        (user_id, symbol, target_price, current_price, action) 
+                        VALUES (%s, %s, %s, %s, %s)
+                    ''', (user_id, symbol, target_price, current_price, action))
+                    
+                    # 停用追蹤
+                    cursor.execute('''
+                        UPDATE stock_tracking 
+                        SET is_active = FALSE 
+                        WHERE user_id = %s AND symbol = %s AND target_price = %s AND action = %s
+                    ''', (user_id, symbol, target_price, action))
+                else:
+                    cursor.execute('''
+                        INSERT INTO price_alerts 
+                        (user_id, symbol, target_price, current_price, action) 
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (user_id, symbol, target_price, current_price, action))
+                    
+                    # 停用追蹤
+                    cursor.execute('''
+                        UPDATE stock_tracking 
+                        SET is_active = 0 
+                        WHERE user_id = ? AND symbol = ? AND target_price = ? AND action = ?
+                    ''', (user_id, symbol, target_price, action))
                 
                 alerts.append({
                     'user_id': user_id,
@@ -1217,19 +1290,37 @@ def test_stock(symbol):
             'error': str(e)
         }
 
+def initialize_app():
+    """初始化應用程式"""
+    try:
+        logger.info("🚀 啟動 LINE Bot 股票監控系統...")
+        
+        # 初始化資料庫
+        init_db()
+        
+        # 啟動價格檢查排程器
+        price_scheduler_thread = threading.Thread(target=price_check_scheduler, daemon=True)
+        price_scheduler_thread.start()
+        logger.info("✅ 價格檢查排程器已啟動")
+        
+        # 啟動週報發送排程器
+        weekly_scheduler_thread = threading.Thread(target=weekly_report_scheduler, daemon=True)
+        weekly_scheduler_thread.start()
+        logger.info("✅ 週報發送排程器已啟動")
+        
+        return True
+    except Exception as e:
+        logger.error(f"❌ 應用程式初始化失敗: {str(e)}")
+        return False
+
+# 在模組載入時初始化（僅在直接運行時）
 if __name__ == "__main__":
-    logger.info("🚀 啟動 LINE Bot 股票監控系統...")
-    init_db()
-    
-    # 啟動價格檢查排程器
-    price_scheduler_thread = threading.Thread(target=price_check_scheduler, daemon=True)
-    price_scheduler_thread.start()
-    logger.info("✅ 價格檢查排程器已啟動")
-    
-    # 啟動週報發送排程器
-    weekly_scheduler_thread = threading.Thread(target=weekly_report_scheduler, daemon=True)
-    weekly_scheduler_thread.start()
-    logger.info("✅ 週報發送排程器已啟動")
-    
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    if initialize_app():
+        port = int(os.environ.get('PORT', 5000))
+        app.run(host="0.0.0.0", port=port, debug=False)
+    else:
+        logger.error("❌ 應用程式初始化失敗，無法啟動")
+        exit(1)
+else:
+    # 當作為模組導入時，也進行初始化
+    initialize_app()

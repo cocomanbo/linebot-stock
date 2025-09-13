@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from flask import Flask, request, abort
 
 # 載入環境變數
@@ -400,6 +402,25 @@ cache_timeout = 300  # 5分鐘緩存
 # 全局變數用於儲存股票追蹤（雲端環境的替代方案）
 stock_trackings = {}  # {user_id: [{'symbol': '2330', 'target_price': 1230, 'action': '買進', 'created_at': '2024-01-01'}]}
 
+def get_db_connection():
+    """獲取資料庫連接"""
+    try:
+        # 檢查是否有 PostgreSQL 連接字串
+        database_url = os.getenv('DATABASE_URL')
+        if database_url:
+            # 使用 PostgreSQL
+            conn = psycopg2.connect(database_url, cursor_factory=RealDictCursor)
+            logger.info("✅ 連接到 PostgreSQL 資料庫")
+            return conn, 'postgresql'
+        else:
+            # 使用 SQLite（本地環境）
+            conn = sqlite3.connect('stock_bot.db')
+            logger.info("✅ 連接到 SQLite 資料庫")
+            return conn, 'sqlite'
+    except Exception as e:
+        logger.error(f"❌ 資料庫連接失敗: {str(e)}")
+        return None, None
+
 def format_stock_message(stock_data):
     """改良的股票訊息格式化"""
     if not stock_data:
@@ -538,45 +559,65 @@ def generate_weekly_report():
 def init_db():
     """初始化資料庫"""
     try:
-        # 在 Render 環境中使用記憶體資料庫
-        import os
-        if os.getenv('RENDER'):
-            # 雲端環境使用記憶體資料庫
-            conn = sqlite3.connect(':memory:')
-            logger.info("🌐 使用記憶體資料庫（雲端環境）")
-        else:
-            # 本地環境使用檔案資料庫
-            conn = sqlite3.connect('stock_bot.db')
-            logger.info("💻 使用檔案資料庫（本地環境）")
+        conn, db_type = get_db_connection()
+        if not conn:
+            logger.error("❌ 無法獲取資料庫連接")
+            return
         
         cursor = conn.cursor()
         
-        # 創建股票追蹤表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS stock_tracking (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                target_price REAL NOT NULL,
-                action TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1,
-                UNIQUE(user_id, symbol, target_price, action)
-            )
-        ''')
-        
-        # 創建股票提醒記錄表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS price_alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                target_price REAL NOT NULL,
-                current_price REAL NOT NULL,
-                action TEXT NOT NULL,
-                triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        if db_type == 'postgresql':
+            # PostgreSQL 語法
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS stock_tracking (
+                    id SERIAL PRIMARY KEY,
+                    user_id VARCHAR(255) NOT NULL,
+                    symbol VARCHAR(50) NOT NULL,
+                    target_price DECIMAL(10,2) NOT NULL,
+                    action VARCHAR(20) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    UNIQUE(user_id, symbol, target_price, action)
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS price_alerts (
+                    id SERIAL PRIMARY KEY,
+                    user_id VARCHAR(255) NOT NULL,
+                    symbol VARCHAR(50) NOT NULL,
+                    target_price DECIMAL(10,2) NOT NULL,
+                    current_price DECIMAL(10,2) NOT NULL,
+                    action VARCHAR(20) NOT NULL,
+                    triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+        else:
+            # SQLite 語法
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS stock_tracking (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    target_price REAL NOT NULL,
+                    action TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_active BOOLEAN DEFAULT 1,
+                    UNIQUE(user_id, symbol, target_price, action)
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS price_alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    target_price REAL NOT NULL,
+                    current_price REAL NOT NULL,
+                    action TEXT NOT NULL,
+                    triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
         
         conn.commit()
         conn.close()
@@ -588,43 +629,33 @@ def init_db():
 def add_stock_tracking(user_id, symbol, target_price, action):
     """添加股票追蹤"""
     try:
-        # 檢查是否為雲端環境
-        if os.getenv('RENDER'):
-            # 使用記憶體儲存
-            if user_id not in stock_trackings:
-                stock_trackings[user_id] = []
-            
-            # 檢查是否已存在相同的追蹤
-            for tracking in stock_trackings[user_id]:
-                if (tracking['symbol'] == symbol and 
-                    tracking['target_price'] == target_price and 
-                    tracking['action'] == action):
-                    return True  # 已存在，視為成功
-            
-            # 添加新的追蹤
-            tracking_data = {
-                'symbol': symbol,
-                'target_price': target_price,
-                'action': action,
-                'created_at': datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
-            }
-            stock_trackings[user_id].append(tracking_data)
-            logger.info(f"✅ 記憶體追蹤添加成功: {user_id} - {symbol}")
-            return True
+        conn, db_type = get_db_connection()
+        if not conn:
+            logger.error("❌ 無法獲取資料庫連接")
+            return False
+        
+        cursor = conn.cursor()
+        
+        if db_type == 'postgresql':
+            # PostgreSQL 語法
+            cursor.execute('''
+                INSERT INTO stock_tracking (user_id, symbol, target_price, action) 
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id, symbol, target_price, action) 
+                DO UPDATE SET is_active = TRUE, created_at = CURRENT_TIMESTAMP
+            ''', (user_id, symbol, target_price, action))
         else:
-            # 本地環境使用資料庫
-            conn = sqlite3.connect('stock_bot.db')
-            cursor = conn.cursor()
-            
+            # SQLite 語法
             cursor.execute('''
                 INSERT OR REPLACE INTO stock_tracking 
                 (user_id, symbol, target_price, action) 
                 VALUES (?, ?, ?, ?)
             ''', (user_id, symbol, target_price, action))
-            
-            conn.commit()
-            conn.close()
-            return True
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"✅ 股票追蹤添加成功: {user_id} - {symbol}")
+        return True
         
     except Exception as e:
         logger.error(f"❌ 添加股票追蹤失敗: {str(e)}")
@@ -633,28 +664,39 @@ def add_stock_tracking(user_id, symbol, target_price, action):
 def get_user_trackings(user_id):
     """獲取用戶的股票追蹤列表"""
     try:
-        # 檢查是否為雲端環境
-        if os.getenv('RENDER'):
-            # 使用記憶體儲存
-            if user_id in stock_trackings:
-                return stock_trackings[user_id]
-            else:
-                return []
+        conn, db_type = get_db_connection()
+        if not conn:
+            logger.error("❌ 無法獲取資料庫連接")
+            return []
+        
+        cursor = conn.cursor()
+        
+        if db_type == 'postgresql':
+            # PostgreSQL 語法
+            cursor.execute('''
+                SELECT symbol, target_price, action, created_at 
+                FROM stock_tracking 
+                WHERE user_id = %s AND is_active = TRUE
+                ORDER BY created_at DESC
+            ''', (user_id,))
         else:
-            # 本地環境使用資料庫
-            conn = sqlite3.connect('stock_bot.db')
-            cursor = conn.cursor()
-            
+            # SQLite 語法
             cursor.execute('''
                 SELECT symbol, target_price, action, created_at 
                 FROM stock_tracking 
                 WHERE user_id = ? AND is_active = 1
                 ORDER BY created_at DESC
             ''', (user_id,))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        if db_type == 'postgresql':
+            # PostgreSQL 返回字典格式
+            return [{'symbol': row['symbol'], 'target_price': row['target_price'], 
+                    'action': row['action'], 'created_at': str(row['created_at'])} for row in results]
+        else:
+            # SQLite 返回元組格式
             return [{'symbol': row[0], 'target_price': row[1], 'action': row[2], 'created_at': row[3]} for row in results]
         
     except Exception as e:

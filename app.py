@@ -410,14 +410,10 @@ def get_db_connection():
             # 檢查是否有 PostgreSQL 連接字串
             database_url = os.getenv('DATABASE_URL')
             if database_url:
-                # 使用 PostgreSQL（添加連接參數）
+                # 使用 PostgreSQL（簡化連接參數）
                 conn = psycopg2.connect(
                     database_url, 
-                    cursor_factory=RealDictCursor,
-                    connect_timeout=10,  # 10秒連接超時
-                    keepalives_idle=600,  # 保持連接活躍
-                    keepalives_interval=30,
-                    keepalives_count=3
+                    cursor_factory=RealDictCursor
                 )
                 logger.info("✅ 連接到 PostgreSQL 資料庫")
                 return conn, 'postgresql'
@@ -1398,23 +1394,13 @@ def initialize_app():
     try:
         logger.info("🚀 啟動 LINE Bot 股票監控系統...")
         
-        # 初始化資料庫（重試機制）
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                init_db()
-                # 檢查資料庫健康狀態
-                if check_database_health():
-                    logger.info("✅ 資料庫初始化成功且健康")
-                    break
-                else:
-                    logger.warning("⚠️ 資料庫初始化成功但健康檢查失敗")
-            except Exception as e:
-                logger.warning(f"⚠️ 資料庫初始化失敗 (嘗試 {attempt + 1}/{max_retries}): {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(2)  # 等待2秒後重試
-                else:
-                    logger.error("❌ 資料庫初始化最終失敗，但程式繼續運行")
+        # 初始化資料庫（簡化版）
+        try:
+            init_db()
+            logger.info("✅ 資料庫初始化成功")
+        except Exception as e:
+            logger.warning(f"⚠️ 資料庫初始化失敗: {str(e)}")
+            logger.info("ℹ️ 程式將使用記憶體備用方案繼續運行")
         
         # 啟動價格檢查排程器
         try:

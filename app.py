@@ -753,6 +753,40 @@ def remove_stock_tracking(user_id, symbol, target_price, action):
         logger.error(f"❌ 移除股票追蹤失敗: {str(e)}")
         return False
 
+def remove_stock_tracking_by_symbol(user_id, symbol):
+    """按股票代號取消追蹤"""
+    try:
+        conn, db_type = get_db_connection()
+        if not conn:
+            logger.error("❌ 無法獲取資料庫連接")
+            return False
+        
+        cursor = conn.cursor()
+        
+        if db_type == 'postgresql':
+            # PostgreSQL 語法
+            cursor.execute('''
+                UPDATE stock_tracking 
+                SET is_active = FALSE 
+                WHERE user_id = %s AND symbol = %s
+            ''', (user_id, symbol))
+        else:
+            # SQLite 語法
+            cursor.execute('''
+                UPDATE stock_tracking 
+                SET is_active = 0 
+                WHERE user_id = ? AND symbol = ?
+            ''', (user_id, symbol))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"✅ 已取消 {symbol} 的所有追蹤: {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ 按代號取消追蹤失敗: {str(e)}")
+        return False
+
 def remove_all_trackings(user_id):
     """移除用戶的所有股票追蹤"""
     try:
@@ -1050,8 +1084,10 @@ def handle_message(event):
 • 「測試」- 系統狀態檢查
 • 「診斷」- API功能診斷
 • 「追蹤 2330 800 買進」- 設定股票價格提醒
+• 「修改追蹤 2330 800 1100 買進」- 修改追蹤價格
 • 「我的追蹤」- 查看追蹤清單
-• 「取消追蹤 2330 800 買進」- 取消追蹤
+• 「取消追蹤 2330」- 取消追蹤（簡化版）
+• 「取消追蹤 2330 800 買進」- 取消追蹤（完整版）
 • 「取消全部」- 取消所有追蹤
                 """.strip()
                 
@@ -1157,11 +1193,45 @@ def handle_message(event):
                 else:
                     reply_text = "📋 您目前沒有追蹤任何股票\n💡 使用「追蹤 2330 800 買進」來設定提醒"
             
+            elif user_message.startswith('修改追蹤 '):
+                # 處理修改追蹤指令：修改追蹤 2330 800 1100 買進
+                try:
+                    parts = user_message.split()
+                    if len(parts) >= 5:
+                        symbol = parts[1]
+                        old_price = float(parts[2])
+                        new_price = float(parts[3])
+                        action = parts[4]
+                        
+                        # 先刪除舊的追蹤
+                        if remove_stock_tracking(user_id, symbol, old_price, action):
+                            # 再添加新的追蹤
+                            if add_stock_tracking(user_id, symbol, new_price, action):
+                                reply_text = f"✅ 已修改 {symbol} 追蹤價格：{old_price} → {new_price} {action}"
+                            else:
+                                reply_text = f"❌ 修改追蹤失敗，請稍後再試"
+                        else:
+                            reply_text = f"❌ 找不到 {symbol} {old_price} {action} 的追蹤記錄"
+                    else:
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 修改追蹤 2330 800 1100 買進"
+                except ValueError:
+                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 修改追蹤 2330 800 1100 買進"
+                except Exception as e:
+                    reply_text = f"❌ 修改追蹤失敗: {str(e)}"
+            
             elif user_message.startswith('取消追蹤 '):
                 # 處理取消追蹤指令
                 try:
                     parts = user_message.split()
-                    if len(parts) >= 4:
+                    if len(parts) == 2:
+                        # 簡化格式：取消追蹤 2330
+                        symbol = parts[1]
+                        if remove_stock_tracking_by_symbol(user_id, symbol):
+                            reply_text = f"✅ 已取消追蹤 {symbol} 的所有提醒"
+                        else:
+                            reply_text = f"❌ 找不到 {symbol} 的追蹤記錄"
+                    elif len(parts) >= 4:
+                        # 完整格式：取消追蹤 2330 800 買進
                         symbol = parts[1]
                         target_price = float(parts[2])
                         action = parts[3]
@@ -1171,9 +1241,9 @@ def handle_message(event):
                         else:
                             reply_text = "❌ 取消追蹤失敗，請稍後再試"
                     else:
-                        reply_text = "❌ 格式錯誤\n💡 正確格式: 取消追蹤 2330 800 買進"
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 取消追蹤 2330 或 取消追蹤 2330 800 買進"
                 except ValueError:
-                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 取消追蹤 2330 800 買進"
+                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 取消追蹤 2330 或 取消追蹤 2330 800 買進"
                 except Exception as e:
                     reply_text = f"❌ 取消追蹤失敗: {str(e)}"
             

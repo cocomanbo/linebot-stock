@@ -403,23 +403,36 @@ cache_timeout = 300  # 5分鐘緩存
 stock_trackings = {}  # {user_id: [{'symbol': '2330', 'target_price': 1230, 'action': '買進', 'created_at': '2024-01-01'}]}
 
 def get_db_connection():
-    """獲取資料庫連接"""
-    try:
-        # 檢查是否有 PostgreSQL 連接字串
-        database_url = os.getenv('DATABASE_URL')
-        if database_url:
-            # 使用 PostgreSQL
-            conn = psycopg2.connect(database_url, cursor_factory=RealDictCursor)
-            logger.info("✅ 連接到 PostgreSQL 資料庫")
-            return conn, 'postgresql'
-        else:
-            # 使用 SQLite（本地環境）
-            conn = sqlite3.connect('stock_bot.db')
-            logger.info("✅ 連接到 SQLite 資料庫")
-            return conn, 'sqlite'
-    except Exception as e:
-        logger.error(f"❌ 資料庫連接失敗: {str(e)}")
-        return None, None
+    """獲取資料庫連接（改進版）"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # 檢查是否有 PostgreSQL 連接字串
+            database_url = os.getenv('DATABASE_URL')
+            if database_url:
+                # 使用 PostgreSQL（添加連接參數）
+                conn = psycopg2.connect(
+                    database_url, 
+                    cursor_factory=RealDictCursor,
+                    connect_timeout=10,  # 10秒連接超時
+                    keepalives_idle=600,  # 保持連接活躍
+                    keepalives_interval=30,
+                    keepalives_count=3
+                )
+                logger.info("✅ 連接到 PostgreSQL 資料庫")
+                return conn, 'postgresql'
+            else:
+                # 使用 SQLite（本地環境）
+                conn = sqlite3.connect('stock_bot.db', timeout=20)
+                logger.info("✅ 連接到 SQLite 資料庫")
+                return conn, 'sqlite'
+        except Exception as e:
+            logger.warning(f"⚠️ 資料庫連接失敗 (嘗試 {attempt + 1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(1)  # 等待1秒後重試
+            else:
+                logger.error(f"❌ 資料庫連接最終失敗: {str(e)}")
+                return None, None
 
 def format_stock_message(stock_data):
     """改良的股票訊息格式化"""
@@ -1360,30 +1373,72 @@ def test_stock(symbol):
             'error': str(e)
         }
 
+def check_database_health():
+    """檢查資料庫健康狀態"""
+    try:
+        conn, db_type = get_db_connection()
+        if not conn:
+            return False
+        
+        cursor = conn.cursor()
+        if db_type == 'postgresql':
+            cursor.execute('SELECT 1')
+        else:
+            cursor.execute('SELECT 1')
+        
+        cursor.fetchone()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"❌ 資料庫健康檢查失敗: {str(e)}")
+        return False
+
 def initialize_app():
     """初始化應用程式"""
     try:
         logger.info("🚀 啟動 LINE Bot 股票監控系統...")
         
-        # 初始化資料庫
-        init_db()
+        # 初始化資料庫（重試機制）
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                init_db()
+                # 檢查資料庫健康狀態
+                if check_database_health():
+                    logger.info("✅ 資料庫初始化成功且健康")
+                    break
+                else:
+                    logger.warning("⚠️ 資料庫初始化成功但健康檢查失敗")
+            except Exception as e:
+                logger.warning(f"⚠️ 資料庫初始化失敗 (嘗試 {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)  # 等待2秒後重試
+                else:
+                    logger.error("❌ 資料庫初始化最終失敗，但程式繼續運行")
         
         # 啟動價格檢查排程器
-        price_scheduler_thread = threading.Thread(target=price_check_scheduler, daemon=True)
-        price_scheduler_thread.start()
-        logger.info("✅ 價格檢查排程器已啟動")
+        try:
+            price_scheduler_thread = threading.Thread(target=price_check_scheduler, daemon=True)
+            price_scheduler_thread.start()
+            logger.info("✅ 價格檢查排程器已啟動")
+        except Exception as e:
+            logger.error(f"❌ 價格檢查排程器啟動失敗: {str(e)}")
         
         # 啟動週報發送排程器
-        weekly_scheduler_thread = threading.Thread(target=weekly_report_scheduler, daemon=True)
-        weekly_scheduler_thread.start()
-        logger.info("✅ 週報發送排程器已啟動")
+        try:
+            weekly_scheduler_thread = threading.Thread(target=weekly_report_scheduler, daemon=True)
+            weekly_scheduler_thread.start()
+            logger.info("✅ 週報發送排程器已啟動")
+        except Exception as e:
+            logger.error(f"❌ 週報發送排程器啟動失敗: {str(e)}")
         
+        logger.info("✅ LINE Bot 股票監控系統啟動完成")
         return True
     except Exception as e:
         logger.error(f"❌ 應用程式初始化失敗: {str(e)}")
         return False
 
-# 在模組載入時初始化（僅在直接運行時）
+# 在模組載入時初始化
 if __name__ == "__main__":
     if initialize_app():
         port = int(os.environ.get('PORT', 5000))
@@ -1392,5 +1447,5 @@ if __name__ == "__main__":
         logger.error("❌ 應用程式初始化失敗，無法啟動")
         exit(1)
 else:
-    # 當作為模組導入時，也進行初始化
+    # 當作為模組導入時（如 Gunicorn），也進行初始化
     initialize_app()

@@ -730,15 +730,40 @@ def get_db_connection():
         try:
             # 檢查是否有 PostgreSQL 連接字串
             database_url = os.getenv('DATABASE_URL')
-            if database_url:
-                # 使用 PostgreSQL（簡化連接參數）
-                conn = psycopg2.connect(
-                    database_url, 
-                    cursor_factory=RealDictCursor
-                )
+            logger.info(f"🔍 DATABASE_URL 存在: {database_url is not None}")
+            
+            # 檢查是否在 Render 環境（強制使用 PostgreSQL）
+            is_render = os.getenv('RENDER') == 'true'
+            logger.info(f"🔍 是否在 Render 環境: {is_render}")
+            
+            if database_url or is_render:
+                if database_url:
+                    logger.info(f"🔍 DATABASE_URL 內容: {database_url[:50]}...")
+                    # 使用 PostgreSQL（簡化連接參數）
+                    conn = psycopg2.connect(
+                        database_url, 
+                        cursor_factory=RealDictCursor
+                    )
+                else:
+                    # 在 Render 環境但沒有 DATABASE_URL，嘗試從其他環境變數構建
+                    db_host = os.getenv('DB_HOST', 'localhost')
+                    db_port = os.getenv('DB_PORT', '5432')
+                    db_name = os.getenv('DB_NAME', 'stock_bot')
+                    db_user = os.getenv('DB_USER', 'postgres')
+                    db_password = os.getenv('DB_PASSWORD', '')
+                    
+                    conn = psycopg2.connect(
+                        host=db_host,
+                        port=db_port,
+                        database=db_name,
+                        user=db_user,
+                        password=db_password,
+                        cursor_factory=RealDictCursor
+                    )
                 logger.info("✅ 連接到 PostgreSQL 資料庫")
                 return conn, 'postgresql'
             else:
+                logger.warning("⚠️ 未找到 DATABASE_URL，使用 SQLite")
                 # 使用 SQLite（本地環境）
                 conn = sqlite3.connect('stock_bot.db', timeout=20)
                 logger.info("✅ 連接到 SQLite 資料庫")

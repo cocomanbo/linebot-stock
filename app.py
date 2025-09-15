@@ -1333,18 +1333,22 @@ def price_check_scheduler():
             time.sleep(60)  # 錯誤時等待1分鐘
 
 def weekly_report_scheduler():
-    """週報發送排程器 - 測試模式：每分鐘檢查一次"""
+    """週報發送排程器 - 每週一早上8點推送"""
     while True:
         try:
             now = datetime.now(tz)
             
-            # 測試模式：每分鐘檢查一次（原本是每週一中午12點）
-            logger.info("📊 執行週報發送...")
-            logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-            send_weekly_report_to_all_users()
-            
-            # 等待到下一分鐘，避免重複發送
-            time.sleep(60)
+            # 檢查是否為週一早上8點
+            if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
+                logger.info("📊 執行週報發送...")
+                logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+                send_weekly_report_to_all_users()
+                
+                # 等待到下一分鐘，避免重複發送
+                time.sleep(60)
+            else:
+                # 每分鐘檢查一次
+                time.sleep(60)
                 
         except Exception as e:
             logger.error(f"❌ 週報排程器錯誤: {str(e)}")

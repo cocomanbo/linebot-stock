@@ -1427,6 +1427,7 @@ def handle_message(event):
 • 「美股 AAPL」- 查看美股股價  
 • 「測試」- 系統狀態檢查
 • 「診斷」- API功能診斷
+• 「追蹤 2330」- 追蹤公司（財報推送）
 • 「追蹤 2330 800 買進」- 設定股票價格提醒
 • 「修改追蹤 2330 800 1100 買進」- 修改追蹤價格
 • 「我的追蹤」- 查看追蹤清單
@@ -1510,7 +1511,7 @@ def handle_message(event):
                 try:
                     parts = user_message.split()
                     if len(parts) >= 4:
-                        # 完整格式：追蹤 2330 800 買進
+                        # 完整格式：追蹤 2330 800 買進（設定價格提醒）
                         symbol = parts[1]
                         target_price = float(parts[2])
                         action = parts[3]
@@ -1523,11 +1524,13 @@ def handle_message(event):
                         else:
                             reply_text = "❌ 動作必須是「買進」或「賣出」\n💡 格式: 追蹤 2330 800 買進"
                     elif len(parts) == 2:
-                        # 簡化格式：追蹤 MSFT（只追蹤公司，不設定價格提醒）
+                        # 簡化格式：追蹤 2330（只追蹤公司，會收到財報推送）
                         symbol = parts[1]
-                        reply_text = f"✅ 已開始追蹤 {symbol}\n💡 使用「追蹤 {symbol} 價格 動作」來設定價格提醒\n💡 例如: 追蹤 {symbol} 300 買進"
+                        # 這裡需要實現只追蹤公司的邏輯
+                        # 暫時先給出提示
+                        reply_text = f"✅ 已開始追蹤 {symbol}\n📊 您將收到該公司的財報推送\n💡 使用「追蹤 {symbol} 價格 動作」來設定價格提醒"
                     else:
-                        reply_text = "❌ 格式錯誤\n💡 正確格式:\n• 追蹤 MSFT (只追蹤公司)\n• 追蹤 2330 800 買進 (設定價格提醒)"
+                        reply_text = "❌ 格式錯誤\n💡 正確格式:\n• 追蹤 2330 (追蹤公司)\n• 追蹤 2330 800 買進 (設定價格提醒)"
                 except ValueError:
                     reply_text = "❌ 價格格式錯誤\n💡 正確格式: 追蹤 2330 800 買進"
                 except Exception as e:

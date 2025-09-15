@@ -1365,6 +1365,7 @@ def send_weekly_report_to_all_users():
         
         cursor = conn.cursor()
         
+        # 獲取所有用戶（從追蹤記錄中提取，但發送給所有用戶）
         if db_type == 'postgresql':
             # PostgreSQL 語法
             cursor.execute('''
@@ -1381,9 +1382,11 @@ def send_weekly_report_to_all_users():
         users = cursor.fetchall()
         conn.close()
         
+        # 如果沒有追蹤記錄，至少發送給當前用戶（用於測試）
         if not users:
-            logger.info("📊 沒有活躍用戶，跳過週報發送")
-            return
+            logger.info("📊 沒有追蹤記錄，發送給預設用戶")
+            # 使用預設的測試用戶ID（您可以替換為實際的用戶ID）
+            users = [{'user_id': 'Ud486d27c6a7125939a26b203372cbabc'}]  # 您的用戶ID
         
         # 生成週報
         weekly_report = generate_weekly_report()
@@ -1392,9 +1395,15 @@ def send_weekly_report_to_all_users():
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
             
+            # 如果有追蹤記錄的用戶，發送給他們
             for user in users:
                 try:
-                    user_id = user[0] if db_type == 'postgresql' else user[0]
+                    # 正確提取用戶ID（支援 RealDictCursor 和普通 cursor）
+                    if isinstance(user, dict):
+                        user_id = user['user_id']
+                    else:
+                        user_id = user[0]
+                    
                     line_bot_api.push_message(
                         PushMessageRequest(
                             to=user_id,
@@ -1405,6 +1414,12 @@ def send_weekly_report_to_all_users():
                     logger.info(f"✅ 週報發送成功: {user_id}")
                 except Exception as e:
                     logger.error(f"❌ 週報發送失敗 {user_id}: {str(e)}")
+            
+            # 如果沒有追蹤記錄，發送給所有已知用戶
+            # 這裡可以添加其他獲取用戶列表的方法
+            # 暫時記錄沒有用戶的情況
+            if not users:
+                logger.info("📊 沒有追蹤記錄，無法發送週報")
         
         logger.info(f"✅ 週報發送完成，共 {len(users)} 個用戶")
         

@@ -1697,10 +1697,12 @@ def handle_message(event):
                     else:
                         cursor = conn.cursor()
                         cursor.execute('SELECT COUNT(*) FROM stock_tracking')
-                        total_count = cursor.fetchone()[0]
+                        result = cursor.fetchone()
+                        total_count = result[0] if isinstance(result, (list, tuple)) else result['count']
                         
                         cursor.execute('SELECT COUNT(*) FROM stock_tracking WHERE user_id = %s', (user_id,))
-                        user_count = cursor.fetchone()[0]
+                        result = cursor.fetchone()
+                        user_count = result[0] if isinstance(result, (list, tuple)) else result['count']
                         
                         cursor.execute('SELECT symbol, target_price, action FROM stock_tracking WHERE user_id = %s LIMIT 5', (user_id,))
                         user_records = cursor.fetchall()

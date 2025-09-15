@@ -987,14 +987,15 @@ def price_check_scheduler():
             time.sleep(60)  # 錯誤時等待1分鐘
 
 def weekly_report_scheduler():
-    """週報發送排程器 - 每週一早上8點發送"""
+    """週報發送排程器 - 每週一中午12點發送"""
     while True:
         try:
             now = datetime.now(tz)
             
-            # 每週一早上8點發送週報
-            if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
+            # 每週一中午12點發送週報
+            if now.weekday() == 0 and now.hour == 12 and now.minute == 0:
                 logger.info("📊 執行週報發送...")
+                logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
                 send_weekly_report_to_all_users()
                 
                 # 等待到下一分鐘，避免重複發送
@@ -1010,14 +1011,26 @@ def weekly_report_scheduler():
 def send_weekly_report_to_all_users():
     """向所有用戶發送週報"""
     try:
-        # 獲取所有活躍用戶
-        conn = sqlite3.connect('stock_bot.db')
+        # 使用統一的資料庫連接函數
+        conn, db_type = get_db_connection()
+        if not conn:
+            logger.error("❌ 無法獲取資料庫連接")
+            return
+        
         cursor = conn.cursor()
         
-        cursor.execute('''
-            SELECT DISTINCT user_id FROM stock_tracking 
-            WHERE is_active = 1
-        ''')
+        if db_type == 'postgresql':
+            # PostgreSQL 語法
+            cursor.execute('''
+                SELECT DISTINCT user_id FROM stock_tracking 
+                WHERE is_active = TRUE
+            ''')
+        else:
+            # SQLite 語法
+            cursor.execute('''
+                SELECT DISTINCT user_id FROM stock_tracking 
+                WHERE is_active = 1
+            ''')
         
         users = cursor.fetchall()
         conn.close()
@@ -1035,16 +1048,17 @@ def send_weekly_report_to_all_users():
             
             for user in users:
                 try:
+                    user_id = user[0] if db_type == 'postgresql' else user[0]
                     line_bot_api.push_message(
                         PushMessageRequest(
-                            to=user[0],
+                            to=user_id,
                             messages=[TextMessage(text=weekly_report)]
                         )
                     )
                     time.sleep(1)  # 避免發送過快
-                    logger.info(f"✅ 週報發送成功: {user[0]}")
+                    logger.info(f"✅ 週報發送成功: {user_id}")
                 except Exception as e:
-                    logger.error(f"❌ 週報發送失敗 {user[0]}: {str(e)}")
+                    logger.error(f"❌ 週報發送失敗 {user_id}: {str(e)}")
         
         logger.info(f"✅ 週報發送完成，共 {len(users)} 個用戶")
         
@@ -1098,6 +1112,7 @@ def handle_message(event):
 • 「取消追蹤 2330」- 取消追蹤（簡化版）
 • 「取消追蹤 2330 800 買進」- 取消追蹤（完整版）
 • 「取消全部」- 取消所有追蹤
+• 「測試週報」- 手動測試週報功能
                 """.strip()
                 
             elif user_message == '週報':
@@ -1262,6 +1277,15 @@ def handle_message(event):
                     reply_text = "✅ 已取消所有股票追蹤"
                 else:
                     reply_text = "❌ 取消所有追蹤失敗，請稍後再試"
+            
+            elif user_message == '測試週報':
+                # 手動測試週報功能
+                try:
+                    logger.info("🔄 手動測試週報功能...")
+                    send_weekly_report_to_all_users()
+                    reply_text = "✅ 週報測試完成，請檢查是否收到週報"
+                except Exception as e:
+                    reply_text = f"❌ 週報測試失敗: {str(e)}"
                 
             else:
                 reply_text = "🤔 不認識的指令\n輸入「功能」查看可用指令"

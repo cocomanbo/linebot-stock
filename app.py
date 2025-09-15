@@ -1314,7 +1314,7 @@ def weekly_report_scheduler():
             now = datetime.now(tz)
             
             # 測試模式：每分鐘檢查一次（原本是每週一中午12點）
-            if now.minute % 1 == 0:  # 每分鐘觸發一次
+            if True:  # 測試模式：每次都觸發
                 logger.info("📊 執行週報發送...")
                 logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
                 send_weekly_report_to_all_users()

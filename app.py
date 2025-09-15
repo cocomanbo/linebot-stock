@@ -1339,16 +1339,12 @@ def weekly_report_scheduler():
             now = datetime.now(tz)
             
             # 測試模式：每分鐘檢查一次（原本是每週一中午12點）
-            if True:  # 測試模式：每次都觸發
-                logger.info("📊 執行週報發送...")
-                logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-                send_weekly_report_to_all_users()
-                
-                # 等待到下一分鐘，避免重複發送
-                time.sleep(60)
-            else:
-                # 每分鐘檢查一次
-                time.sleep(60)
+            logger.info("📊 執行週報發送...")
+            logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            send_weekly_report_to_all_users()
+            
+            # 等待到下一分鐘，避免重複發送
+            time.sleep(60)
                 
         except Exception as e:
             logger.error(f"❌ 週報排程器錯誤: {str(e)}")

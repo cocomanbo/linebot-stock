@@ -514,11 +514,20 @@ class EarningsDataService:
             info = ticker.info
             
             # 提取財報相關數據
+            def format_timestamp(timestamp):
+                """將時間戳轉換為日期格式"""
+                if timestamp and isinstance(timestamp, (int, float)) and timestamp > 0:
+                    try:
+                        return datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d')
+                    except:
+                        return 'N/A'
+                return 'N/A'
+            
             earnings_data = {
                 'symbol': symbol,
                 'company_name': info.get('longName', symbol),
-                'latest_earnings_date': info.get('mostRecentQuarter', 'N/A'),
-                'next_earnings_date': info.get('nextFiscalYearEnd', 'N/A'),
+                'latest_earnings_date': format_timestamp(info.get('mostRecentQuarter')),
+                'next_earnings_date': format_timestamp(info.get('nextFiscalYearEnd')),
                 'earnings_per_share': info.get('trailingEps', 0),
                 'revenue': info.get('totalRevenue', 0),
                 'net_income': info.get('netIncomeToCommon', 0),

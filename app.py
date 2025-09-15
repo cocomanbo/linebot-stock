@@ -1333,12 +1333,12 @@ def price_check_scheduler():
             time.sleep(60)  # 錯誤時等待1分鐘
 
 def weekly_report_scheduler():
-    """週報發送排程器 - 每週一早上8點推送"""
+    """週報發送排程器 - 每週二早上8點推送"""
     while True:
         try:
             now = datetime.now(tz)
             
-            # 檢查是否為週一早上8點
+            # 檢查是否為週二早上8點
             if now.weekday() == 1 and now.hour == 8 and now.minute == 0:
                 logger.info("📊 執行週報發送...")
                 logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1551,7 +1551,9 @@ def handle_message(event):
                 # 處理股票追蹤指令
                 try:
                     parts = user_message.split()
-                    if len(parts) >= 4:
+                    
+                    # 先檢查是否為價格提醒格式（4個部分且第3個是數字）
+                    if len(parts) == 4 and parts[2].replace('.', '').isdigit():
                         # 完整格式：追蹤 2330 800 買進（設定價格提醒）
                         symbol = parts[1]
                         target_price = float(parts[2])

@@ -992,18 +992,15 @@ def add_stock_tracking(user_id, symbol, target_price, action):
         cursor = conn.cursor()
         
         if db_type == 'postgresql':
-            # PostgreSQL 語法
+            # PostgreSQL 語法 - 簡化版本
             cursor.execute('''
                 INSERT INTO stock_tracking (user_id, symbol, target_price, action) 
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (user_id, symbol, target_price, action) 
-                DO UPDATE SET is_active = TRUE, created_at = CURRENT_TIMESTAMP
             ''', (user_id, symbol, target_price, action))
         else:
-            # SQLite 語法
+            # SQLite 語法 - 簡化版本
             cursor.execute('''
-                INSERT OR REPLACE INTO stock_tracking 
-                (user_id, symbol, target_price, action) 
+                INSERT INTO stock_tracking (user_id, symbol, target_price, action) 
                 VALUES (?, ?, ?, ?)
             ''', (user_id, symbol, target_price, action))
         
@@ -1726,26 +1723,52 @@ def handle_message(event):
                         reply_text += "❌ 無法連接到資料庫"
                     else:
                         cursor = conn.cursor()
+                        
+                        # 檢查表是否存在
+                        if db_type == 'postgresql':
+                            cursor.execute("""
+                                SELECT EXISTS (
+                                    SELECT FROM information_schema.tables 
+                                    WHERE table_name = 'stock_tracking'
+                                );
+                            """)
+                        else:
+                            cursor.execute("""
+                                SELECT name FROM sqlite_master 
+                                WHERE type='table' AND name='stock_tracking';
+                            """)
+                        
+                        table_exists = cursor.fetchone()
+                        
+                        # 檢查總記錄數
                         cursor.execute('SELECT COUNT(*) FROM stock_tracking')
                         result = cursor.fetchone()
                         total_count = result[0] if isinstance(result, (list, tuple)) else result['count']
                         
+                        # 檢查您的記錄數
                         cursor.execute('SELECT COUNT(*) FROM stock_tracking WHERE user_id = %s', (user_id,))
                         result = cursor.fetchone()
                         user_count = result[0] if isinstance(result, (list, tuple)) else result['count']
                         
-                        cursor.execute('SELECT symbol, target_price, action FROM stock_tracking WHERE user_id = %s LIMIT 5', (user_id,))
-                        user_records = cursor.fetchall()
+                        # 檢查所有用戶的記錄
+                        cursor.execute('SELECT user_id, COUNT(*) as count FROM stock_tracking GROUP BY user_id')
+                        all_users = cursor.fetchall()
+                        
+                        # 檢查最近的記錄
+                        cursor.execute('SELECT user_id, symbol, created_at FROM stock_tracking ORDER BY created_at DESC LIMIT 10')
+                        recent_records = cursor.fetchall()
                         
                         conn.close()
                         
                         reply_text += f"""
 ✅ 資料庫連接成功:
+🗄️ 資料庫類型: {db_type}
+📋 表是否存在: {table_exists[0] if table_exists else 'Unknown'}
 📊 總追蹤記錄數: {total_count}
 👤 您的追蹤記錄數: {user_count}
 🆔 您的用戶ID: {user_id}
-📋 您的記錄: {user_records}
-🗄️ 資料庫類型: {db_type}"""
+👥 所有用戶記錄: {all_users}
+📋 最近10筆記錄: {recent_records}"""
                 except Exception as e:
                     reply_text += f"\n❌ 資料庫診斷失敗: {str(e)}"
                     import traceback

@@ -728,8 +728,8 @@ def get_db_connection():
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # 檢查是否有 PostgreSQL 連接字串
-            database_url = os.getenv('DATABASE_URL')
+            # 檢查是否有 PostgreSQL 連接字串（支援多種環境變數名稱）
+            database_url = os.getenv('DATABASE_URL') or os.getenv('database_URL')
             logger.info(f"🔍 DATABASE_URL 存在: {database_url is not None}")
             
             # 檢查是否在 Render 環境（強制使用 PostgreSQL）
@@ -1680,9 +1680,20 @@ def handle_message(event):
             elif user_message == '診斷資料庫':
                 # 診斷資料庫狀態
                 try:
+                    # 檢查環境變數
+                    database_url = os.getenv('DATABASE_URL') or os.getenv('database_URL')
+                    is_render = os.getenv('RENDER') == 'true'
+                    
+                    reply_text = f"""🔍 環境變數診斷:
+📋 DATABASE_URL 存在: {os.getenv('DATABASE_URL') is not None}
+📋 database_URL 存在: {os.getenv('database_URL') is not None}
+🌐 在 Render 環境: {is_render}
+🔗 連接字串長度: {len(database_url) if database_url else 0}
+"""
+                    
                     conn, db_type = get_db_connection()
                     if not conn:
-                        reply_text = "❌ 無法連接到資料庫"
+                        reply_text += "❌ 無法連接到資料庫"
                     else:
                         cursor = conn.cursor()
                         cursor.execute('SELECT COUNT(*) FROM stock_tracking')
@@ -1696,14 +1707,17 @@ def handle_message(event):
                         
                         conn.close()
                         
-                        reply_text = f"""🔍 資料庫診斷結果:
+                        reply_text += f"""
+✅ 資料庫連接成功:
 📊 總追蹤記錄數: {total_count}
 👤 您的追蹤記錄數: {user_count}
 🆔 您的用戶ID: {user_id}
 📋 您的記錄: {user_records}
 🗄️ 資料庫類型: {db_type}"""
                 except Exception as e:
-                    reply_text = f"❌ 資料庫診斷失敗: {str(e)}"
+                    reply_text += f"\n❌ 資料庫診斷失敗: {str(e)}"
+                    import traceback
+                    reply_text += f"\n🔍 詳細錯誤: {traceback.format_exc()}"
                 
             else:
                 reply_text = "🤔 不認識的指令\n輸入「功能」查看可用指令"

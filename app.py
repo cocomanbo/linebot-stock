@@ -1308,13 +1308,13 @@ def price_check_scheduler():
             time.sleep(60)  # 錯誤時等待1分鐘
 
 def weekly_report_scheduler():
-    """週報發送排程器 - 每週一中午12點發送"""
+    """週報發送排程器 - 測試模式：每分鐘檢查一次"""
     while True:
         try:
             now = datetime.now(tz)
             
-            # 每週一中午12點發送週報
-            if now.weekday() == 0 and now.hour == 12 and now.minute == 0:
+            # 測試模式：每分鐘檢查一次（原本是每週一中午12點）
+            if now.minute % 1 == 0:  # 每分鐘觸發一次
                 logger.info("📊 執行週報發送...")
                 logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
                 send_weekly_report_to_all_users()
@@ -1510,6 +1510,7 @@ def handle_message(event):
                 try:
                     parts = user_message.split()
                     if len(parts) >= 4:
+                        # 完整格式：追蹤 2330 800 買進
                         symbol = parts[1]
                         target_price = float(parts[2])
                         action = parts[3]
@@ -1521,8 +1522,12 @@ def handle_message(event):
                                 reply_text = "❌ 設定追蹤失敗，請稍後再試"
                         else:
                             reply_text = "❌ 動作必須是「買進」或「賣出」\n💡 格式: 追蹤 2330 800 買進"
+                    elif len(parts) == 2:
+                        # 簡化格式：追蹤 MSFT（只追蹤公司，不設定價格提醒）
+                        symbol = parts[1]
+                        reply_text = f"✅ 已開始追蹤 {symbol}\n💡 使用「追蹤 {symbol} 價格 動作」來設定價格提醒\n💡 例如: 追蹤 {symbol} 300 買進"
                     else:
-                        reply_text = "❌ 格式錯誤\n💡 正確格式: 追蹤 2330 800 買進"
+                        reply_text = "❌ 格式錯誤\n💡 正確格式:\n• 追蹤 MSFT (只追蹤公司)\n• 追蹤 2330 800 買進 (設定價格提醒)"
                 except ValueError:
                     reply_text = "❌ 價格格式錯誤\n💡 正確格式: 追蹤 2330 800 買進"
                 except Exception as e:

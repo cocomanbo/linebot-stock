@@ -1651,6 +1651,34 @@ def handle_message(event):
                     reply_text = "✅ 週報測試完成，請檢查是否收到週報"
                 except Exception as e:
                     reply_text = f"❌ 週報測試失敗: {str(e)}"
+            
+            elif user_message == '診斷資料庫':
+                # 診斷資料庫狀態
+                try:
+                    conn, db_type = get_db_connection()
+                    if not conn:
+                        reply_text = "❌ 無法連接到資料庫"
+                    else:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT COUNT(*) FROM stock_tracking')
+                        total_count = cursor.fetchone()[0]
+                        
+                        cursor.execute('SELECT COUNT(*) FROM stock_tracking WHERE user_id = %s', (user_id,))
+                        user_count = cursor.fetchone()[0]
+                        
+                        cursor.execute('SELECT symbol, target_price, action FROM stock_tracking WHERE user_id = %s LIMIT 5', (user_id,))
+                        user_records = cursor.fetchall()
+                        
+                        conn.close()
+                        
+                        reply_text = f"""🔍 資料庫診斷結果:
+📊 總追蹤記錄數: {total_count}
+👤 您的追蹤記錄數: {user_count}
+🆔 您的用戶ID: {user_id}
+📋 您的記錄: {user_records}
+🗄️ 資料庫類型: {db_type}"""
+                except Exception as e:
+                    reply_text = f"❌ 資料庫診斷失敗: {str(e)}"
                 
             else:
                 reply_text = "🤔 不認識的指令\n輸入「功能」查看可用指令"

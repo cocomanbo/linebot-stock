@@ -1339,7 +1339,7 @@ def weekly_report_scheduler():
             now = datetime.now(tz)
             
             # 檢查是否為週一早上8點
-            if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
+            if now.weekday() == 1 and now.hour == 8 and now.minute == 0:
                 logger.info("📊 執行週報發送...")
                 logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
                 send_weekly_report_to_all_users()

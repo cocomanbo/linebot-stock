@@ -523,11 +523,27 @@ class EarningsDataService:
                         return 'N/A'
                 return 'N/A'
             
+            # 計算下一個季度財報日期
+            def get_next_quarter_earnings_date(latest_date_str):
+                """根據最新財報日期計算下一個季度財報日期"""
+                try:
+                    if latest_date_str and latest_date_str != 'N/A':
+                        latest_date = datetime.fromtimestamp(int(latest_date_str))
+                        # 計算下一個季度（3個月後）
+                        next_quarter = latest_date + timedelta(days=90)
+                        return next_quarter.strftime('%Y-%m-%d')
+                    return 'N/A'
+                except:
+                    return 'N/A'
+            
+            latest_timestamp = info.get('mostRecentQuarter')
+            next_earnings_date = get_next_quarter_earnings_date(latest_timestamp)
+            
             earnings_data = {
                 'symbol': symbol,
                 'company_name': info.get('longName', symbol),
-                'latest_earnings_date': format_timestamp(info.get('mostRecentQuarter')),
-                'next_earnings_date': format_timestamp(info.get('nextFiscalYearEnd')),
+                'latest_earnings_date': format_timestamp(latest_timestamp),
+                'next_earnings_date': next_earnings_date,
                 'earnings_per_share': info.get('trailingEps', 0),
                 'revenue': info.get('totalRevenue', 0),
                 'net_income': info.get('netIncomeToCommon', 0),
@@ -550,11 +566,16 @@ class EarningsDataService:
             # 先返回模擬數據
             time.sleep(0.4)
             
+            # 計算合理的下一個季度財報日期
+            from datetime import datetime, timedelta
+            latest_date = datetime(2024, 1, 20)
+            next_quarter = latest_date + timedelta(days=90)
+            
             return {
                 'symbol': symbol,
                 'company_name': f"美股{symbol}",
                 'latest_earnings_date': '2024-01-20',
-                'next_earnings_date': '2024-04-20',
+                'next_earnings_date': next_quarter.strftime('%Y-%m-%d'),
                 'earnings_per_share': 8.5,
                 'revenue': 1200000000,
                 'net_income': 600000000,
@@ -1583,6 +1604,7 @@ def handle_message(event):
             elif user_message.startswith('財報 '):
                 # 處理財報查詢：財報 2330 或 財報 AAPL
                 try:
+                    logger.info(f"🔄 收到財報查詢指令: {user_message}")
                     parts = user_message.split()
                     if len(parts) >= 2:
                         symbol = parts[1]
@@ -1594,15 +1616,24 @@ def handle_message(event):
                         else:
                             market = 'US'
                         
+                        logger.info(f"🔄 市場類型: {market}")
                         earnings_data = EarningsDataService.get_earnings_data(symbol, market)
+                        logger.info(f"🔄 財報數據: {earnings_data}")
+                        
                         if earnings_data:
                             reply_text = format_earnings_message(earnings_data)
+                            logger.info(f"✅ 財報查詢成功: {symbol}")
                         else:
                             reply_text = f"❌ 無法獲取 {symbol} 的財報資訊\n💡 請稍後再試或檢查股票代碼"
+                            logger.warning(f"⚠️ 財報數據為空: {symbol}")
                     else:
                         reply_text = "❌ 格式錯誤\n💡 正確格式: 財報 2330 或 財報 AAPL"
+                        logger.warning(f"⚠️ 財報指令格式錯誤: {user_message}")
                 except Exception as e:
                     reply_text = f"❌ 查詢財報失敗: {str(e)}"
+                    logger.error(f"❌ 財報查詢異常: {str(e)}")
+                    import traceback
+                    logger.error(f"❌ 詳細錯誤: {traceback.format_exc()}")
             
             elif user_message == '測試週報':
                 # 手動測試週報功能

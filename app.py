@@ -73,10 +73,12 @@ class StockService:
             if now.weekday() >= 5:  # 週末
                 return StockService._get_twse_offline_data(symbol)
             
-            # 交易時間：9:00-13:30
+            # 台股交易時間：9:00-13:30
             current_time = now.time()
-            if current_time < datetime.strptime('09:00', '%H:%M').time() or \
-               current_time > datetime.strptime('13:30', '%H:%M').time():
+            twse_start = datetime.strptime('09:00', '%H:%M').time()
+            twse_end = datetime.strptime('13:30', '%H:%M').time()
+            
+            if not (twse_start <= current_time <= twse_end):
                 return StockService._get_twse_offline_data(symbol)
             
             # 嘗試獲取即時數據
@@ -1295,19 +1297,39 @@ def send_price_alert(user_id, alert_data):
     except Exception as e:
         logger.error(f"❌ 發送價格提醒失敗: {str(e)}")
 
+def is_trading_time():
+    """檢查是否為交易時間（台股+美股）"""
+    now = datetime.now(tz)
+    
+    # 週末不交易
+    if now.weekday() >= 5:
+        return False
+    
+    current_time = now.time()
+    
+    # 台股交易時間：9:00-13:30
+    twse_start = datetime.strptime('09:00', '%H:%M').time()
+    twse_end = datetime.strptime('13:30', '%H:%M').time()
+    
+    if twse_start <= current_time <= twse_end:
+        return True
+    
+    # 美股交易時間：台灣時間 22:30-05:00 (隔天)
+    # 22:30-23:59 (當天) 或 00:00-05:00 (隔天)
+    us_start = datetime.strptime('22:30', '%H:%M').time()
+    us_end = datetime.strptime('05:00', '%H:%M').time()
+    
+    if current_time >= us_start or current_time <= us_end:
+        return True
+    
+    return False
+
 def price_check_scheduler():
     """價格檢查排程器"""
     while True:
         try:
-            # 檢查是否為台股交易時間
-            now = datetime.now(tz)
-            is_trading_hours = (
-                now.weekday() < 5 and  # 工作日
-                now.time() >= datetime.strptime('09:00', '%H:%M').time() and
-                now.time() <= datetime.strptime('13:30', '%H:%M').time()
-            )
-            
-            if is_trading_hours:
+            # 檢查是否為交易時間（台股+美股）
+            if is_trading_time():
                 logger.info("🔄 執行價格檢查...")
                 alerts = check_price_alerts()
                 
@@ -1336,7 +1358,7 @@ def weekly_report_scheduler():
             now = datetime.now(tz)
             
             # 檢查是否為週二早上8點
-            if now.weekday() == 0 and now.hour == 8 and now.minute == 0:
+            if now.weekday() == 1 and now.hour == 8 and now.minute == 0:
                 logger.info("📊 執行週報發送...")
                 logger.info(f"⏰ 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}")
                 send_weekly_report_to_all_users()

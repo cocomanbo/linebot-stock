@@ -1297,8 +1297,35 @@ def send_price_alert(user_id, alert_data):
     except Exception as e:
         logger.error(f"❌ 發送價格提醒失敗: {str(e)}")
 
+def is_dst_period(date):
+    """判斷是否為夏令時間期間（美國夏令時間）"""
+    try:
+        # 美國夏令時間：3月第二個週日 00:00 到 11月第一個週日 00:00
+        year = date.year
+        
+        # 計算3月第二個週日
+        march_1 = datetime(year, 3, 1)
+        march_first_sunday = march_1 + timedelta(days=(6 - march_1.weekday()) % 7)
+        march_second_sunday = march_first_sunday + timedelta(days=7)
+        
+        # 計算11月第一個週日
+        november_1 = datetime(year, 11, 1)
+        november_first_sunday = november_1 + timedelta(days=(6 - november_1.weekday()) % 7)
+        
+        # 判斷是否在夏令時間期間
+        is_dst = march_second_sunday.date() <= date.date() < november_first_sunday.date()
+        
+        logger.info(f"🕐 夏令時間判斷: {date.strftime('%Y-%m-%d')} -> {'夏令時間' if is_dst else '冬令時間'}")
+        logger.info(f"📅 夏令期間: {march_second_sunday.strftime('%m/%d')} - {november_first_sunday.strftime('%m/%d')}")
+        
+        return is_dst
+    except Exception as e:
+        logger.error(f"❌ 夏令時間判斷失敗: {str(e)}")
+        # 預設為冬令時間
+        return False
+
 def is_trading_time():
-    """檢查是否為交易時間（台股+美股）"""
+    """檢查是否為交易時間（台股+美股，支援夏令/冬令時間）"""
     now = datetime.now(tz)
     
     # 週末不交易
@@ -1307,21 +1334,32 @@ def is_trading_time():
     
     current_time = now.time()
     
-    # 台股交易時間：9:00-13:30
+    # 台股交易時間：9:00-13:30（不變）
     twse_start = datetime.strptime('09:00', '%H:%M').time()
     twse_end = datetime.strptime('13:30', '%H:%M').time()
     
     if twse_start <= current_time <= twse_end:
+        logger.info("🇹🇼 台股交易時間")
         return True
     
-    # 美股交易時間：台灣時間 22:30-05:00 (隔天)
-    # 22:30-23:59 (當天) 或 00:00-05:00 (隔天)
-    us_start = datetime.strptime('22:30', '%H:%M').time()
-    us_end = datetime.strptime('05:00', '%H:%M').time()
+    # 美股交易時間：根據夏令/冬令時間動態調整
+    if is_dst_period(now):
+        # 夏令時間：21:30-04:00
+        us_start = datetime.strptime('21:30', '%H:%M').time()
+        us_end = datetime.strptime('04:00', '%H:%M').time()
+        time_type = "夏令時間"
+    else:
+        # 冬令時間：22:30-05:00
+        us_start = datetime.strptime('22:30', '%H:%M').time()
+        us_end = datetime.strptime('05:00', '%H:%M').time()
+        time_type = "冬令時間"
     
+    # 檢查是否在美股交易時間內
     if current_time >= us_start or current_time <= us_end:
+        logger.info(f"🇺🇸 美股交易時間 ({time_type})")
         return True
     
+    logger.info(f"⏰ 非交易時間 ({time_type})")
     return False
 
 def price_check_scheduler():
@@ -1497,6 +1535,7 @@ def handle_message(event):
 • 「財報 2330」- 查看台股財報資訊
 • 「財報 AAPL」- 查看美股財報資訊
 • 「測試週報」- 手動測試週報功能
+• 「測試時間」- 測試夏令/冬令時間判斷
                 """.strip()
                 
             elif user_message == '週報':
@@ -1725,6 +1764,40 @@ def handle_message(event):
                     reply_text = "✅ 週報測試完成，請檢查是否收到週報"
                 except Exception as e:
                     reply_text = f"❌ 週報測試失敗: {str(e)}"
+            
+            elif user_message == '測試時間':
+                # 測試夏令/冬令時間判斷
+                try:
+                    now = datetime.now(tz)
+                    is_dst = is_dst_period(now)
+                    is_trading = is_trading_time()
+                    
+                    # 計算今年的夏令時間範圍
+                    year = now.year
+                    march_1 = datetime(year, 3, 1)
+                    march_first_sunday = march_1 + timedelta(days=(6 - march_1.weekday()) % 7)
+                    march_second_sunday = march_first_sunday + timedelta(days=7)
+                    
+                    november_1 = datetime(year, 11, 1)
+                    november_first_sunday = november_1 + timedelta(days=(6 - november_1.weekday()) % 7)
+                    
+                    reply_text = f"""🕐 時間診斷報告:
+📅 當前時間: {now.strftime('%Y-%m-%d %H:%M:%S')}
+🌞 是否夏令時間: {'是' if is_dst else '否'}
+📊 是否交易時間: {'是' if is_trading else '否'}
+
+📅 2024年夏令時間範圍:
+🌅 開始: {march_second_sunday.strftime('%m月%d日')}
+🌆 結束: {november_first_sunday.strftime('%m月%d日')}
+
+⏰ 美股交易時間:
+{'21:30-04:00 (夏令時間)' if is_dst else '22:30-05:00 (冬令時間)'}
+
+🇹🇼 台股交易時間:
+09:00-13:30 (全年不變)
+"""
+                except Exception as e:
+                    reply_text = f"❌ 時間測試失敗: {str(e)}"
             
             elif user_message == '診斷資料庫':
                 # 診斷資料庫狀態

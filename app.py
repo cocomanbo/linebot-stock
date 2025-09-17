@@ -1524,16 +1524,26 @@ def handle_message(event):
 • 「美股 AAPL」- 查看美股股價  
 • 「測試」- 系統狀態檢查
 • 「診斷」- API功能診斷
+
+📊 公司追蹤（財報推送）:
 • 「追蹤 2330」- 追蹤公司（財報推送）
 • 「追蹤 2330 AAPL MSFT」- 一次追蹤多個公司
-• 「追蹤 2330 800 買進」- 設定股票價格提醒
-• 「修改追蹤 2330 800 1100 買進」- 修改追蹤價格
+
+💰 價格提醒:
+• 「提醒 2330 800 買進」- 設定股票價格提醒
+• 「修改提醒 2330 800 1100 買進」- 修改提醒價格
+• 「取消提醒 2330」- 取消提醒（簡化版）
+• 「取消提醒 2330 800 買進」- 取消提醒（完整版）
+
+📋 管理功能:
 • 「我的追蹤」- 查看追蹤清單
-• 「取消追蹤 2330」- 取消追蹤（簡化版）
-• 「取消追蹤 2330 800 買進」- 取消追蹤（完整版）
-• 「取消全部」- 取消所有追蹤
+• 「取消全部」- 取消所有追蹤和提醒
+
+📈 財報查詢:
 • 「財報 2330」- 查看台股財報資訊
 • 「財報 AAPL」- 查看美股財報資訊
+
+🔧 測試功能:
 • 「測試週報」- 手動測試週報功能
 • 「測試時間」- 測試夏令/冬令時間判斷
                 """.strip()
@@ -1606,25 +1616,11 @@ def handle_message(event):
                     reply_text = f"❌ 診斷失敗: {str(e)}"
             
             elif user_message.startswith('追蹤 '):
-                # 處理股票追蹤指令
+                # 處理公司追蹤指令（財報推送）
                 try:
                     parts = user_message.split()
                     
-                    # 先檢查是否為價格提醒格式（4個部分且第3個是數字）
-                    if len(parts) == 4 and parts[2].replace('.', '').isdigit():
-                        # 完整格式：追蹤 2330 800 買進（設定價格提醒）
-                        symbol = parts[1]
-                        target_price = float(parts[2])
-                        action = parts[3]
-                        
-                        if action in ['買進', '賣出']:
-                            if add_stock_tracking(user_id, symbol, target_price, action):
-                                reply_text = f"✅ 已設定追蹤 {symbol} {action} 提醒\n💰 目標價格: ${target_price}"
-                            else:
-                                reply_text = "❌ 設定追蹤失敗，請稍後再試"
-                        else:
-                            reply_text = "❌ 動作必須是「買進」或「賣出」\n💡 格式: 追蹤 2330 800 買進"
-                    elif len(parts) >= 2:
+                    if len(parts) >= 2:
                         # 多個公司格式：追蹤 2330 AAPL MSFT（一次追蹤多個公司）
                         symbols = [part.upper() for part in parts[1:]]
                         success_count = 0
@@ -1643,11 +1639,34 @@ def handle_message(event):
                         else:
                             reply_text = f"❌ 追蹤設定失敗\n❌ 失敗公司: {', '.join(failed_symbols)}"
                     else:
-                        reply_text = "❌ 格式錯誤\n💡 正確格式:\n• 追蹤 2330 (追蹤公司)\n• 追蹤 2330 AAPL MSFT (一次追蹤多個公司)\n• 追蹤 2330 800 買進 (設定價格提醒)"
-                except ValueError:
-                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 追蹤 2330 800 買進"
+                        reply_text = "❌ 格式錯誤\n💡 正確格式:\n• 追蹤 2330 (追蹤公司)\n• 追蹤 2330 AAPL MSFT (一次追蹤多個公司)\n\n💰 價格提醒請使用: 提醒 2330 800 買進"
                 except Exception as e:
                     reply_text = f"❌ 設定追蹤失敗: {str(e)}"
+            
+            elif user_message.startswith('提醒 '):
+                # 處理價格提醒指令
+                try:
+                    parts = user_message.split()
+                    
+                    if len(parts) == 4 and parts[2].replace('.', '').isdigit():
+                        # 完整格式：提醒 2330 800 買進（設定價格提醒）
+                        symbol = parts[1]
+                        target_price = float(parts[2])
+                        action = parts[3]
+                        
+                        if action in ['買進', '賣出']:
+                            if add_stock_tracking(user_id, symbol, target_price, action):
+                                reply_text = f"✅ 已設定 {symbol} {action} 提醒\n💰 目標價格: ${target_price}\n⏰ 將在交易時間內每5分鐘檢查一次"
+                            else:
+                                reply_text = "❌ 設定提醒失敗，請稍後再試"
+                        else:
+                            reply_text = "❌ 動作必須是「買進」或「賣出」\n💡 格式: 提醒 2330 800 買進"
+                    else:
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 提醒 2330 800 買進"
+                except ValueError:
+                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 提醒 2330 800 買進"
+                except Exception as e:
+                    reply_text = f"❌ 設定提醒失敗: {str(e)}"
             
             elif user_message == '我的追蹤':
                 # 顯示用戶的股票追蹤列表
@@ -1655,14 +1674,17 @@ def handle_message(event):
                 if trackings:
                     tracking_list = []
                     for tracking in trackings:
-                        tracking_list.append(f"📊 {tracking['symbol']}: ${tracking['target_price']} {tracking['action']}")
+                        if tracking['action'] == '追蹤':
+                            tracking_list.append(f"📊 {tracking['symbol']} (公司追蹤)")
+                        else:
+                            tracking_list.append(f"💰 {tracking['symbol']}: ${tracking['target_price']} {tracking['action']} (價格提醒)")
                     
-                    reply_text = f"📋 您的股票追蹤清單:\n{chr(10).join(tracking_list)}"
+                    reply_text = f"📋 您的追蹤清單:\n{chr(10).join(tracking_list)}"
                 else:
-                    reply_text = "📋 您目前沒有追蹤任何股票\n💡 使用「追蹤 2330 800 買進」來設定提醒"
+                    reply_text = "📋 您目前沒有追蹤任何股票\n💡 使用「追蹤 2330」來追蹤公司，或「提醒 2330 800 買進」來設定價格提醒"
             
-            elif user_message.startswith('修改追蹤 '):
-                # 處理修改追蹤指令：修改追蹤 2330 800 1100 買進
+            elif user_message.startswith('修改提醒 '):
+                # 處理修改提醒指令：修改提醒 2330 800 1100 買進
                 try:
                     parts = user_message.split()
                     if len(parts) >= 5:
@@ -1671,49 +1693,65 @@ def handle_message(event):
                         new_price = float(parts[3])
                         action = parts[4]
                         
-                        # 先刪除舊的追蹤
+                        # 先刪除舊的提醒
                         if remove_stock_tracking(user_id, symbol, old_price, action):
-                            # 再添加新的追蹤
+                            # 再添加新的提醒
                             if add_stock_tracking(user_id, symbol, new_price, action):
-                                reply_text = f"✅ 已修改 {symbol} 追蹤價格：{old_price} → {new_price} {action}"
+                                reply_text = f"✅ 已修改 {symbol} 提醒價格：{old_price} → {new_price} {action}"
                             else:
-                                reply_text = f"❌ 修改追蹤失敗，請稍後再試"
+                                reply_text = f"❌ 修改提醒失敗，請稍後再試"
                         else:
-                            reply_text = f"❌ 找不到 {symbol} {old_price} {action} 的追蹤記錄"
+                            reply_text = f"❌ 找不到 {symbol} {old_price} {action} 的提醒記錄"
                     else:
-                        reply_text = "❌ 格式錯誤\n💡 正確格式: 修改追蹤 2330 800 1100 買進"
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 修改提醒 2330 800 1100 買進"
                 except ValueError:
-                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 修改追蹤 2330 800 1100 買進"
+                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 修改提醒 2330 800 1100 買進"
                 except Exception as e:
-                    reply_text = f"❌ 修改追蹤失敗: {str(e)}"
+                    reply_text = f"❌ 修改提醒失敗: {str(e)}"
             
             elif user_message.startswith('取消追蹤 '):
-                # 處理取消追蹤指令
+                # 處理取消公司追蹤指令（財報推送）
                 try:
                     parts = user_message.split()
                     if len(parts) == 2:
                         # 簡化格式：取消追蹤 2330
                         symbol = parts[1]
                         if remove_stock_tracking_by_symbol(user_id, symbol):
-                            reply_text = f"✅ 已取消追蹤 {symbol} 的所有提醒"
+                            reply_text = f"✅ 已取消追蹤 {symbol} 的公司追蹤"
                         else:
                             reply_text = f"❌ 找不到 {symbol} 的追蹤記錄"
+                    else:
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 取消追蹤 2330\n\n💰 取消價格提醒請使用: 取消提醒 2330 800 買進"
+                except Exception as e:
+                    reply_text = f"❌ 取消追蹤失敗: {str(e)}"
+            
+            elif user_message.startswith('取消提醒 '):
+                # 處理取消價格提醒指令
+                try:
+                    parts = user_message.split()
+                    if len(parts) == 2:
+                        # 簡化格式：取消提醒 2330
+                        symbol = parts[1]
+                        if remove_stock_tracking_by_symbol(user_id, symbol):
+                            reply_text = f"✅ 已取消 {symbol} 的所有價格提醒"
+                        else:
+                            reply_text = f"❌ 找不到 {symbol} 的提醒記錄"
                     elif len(parts) >= 4:
-                        # 完整格式：取消追蹤 2330 800 買進
+                        # 完整格式：取消提醒 2330 800 買進
                         symbol = parts[1]
                         target_price = float(parts[2])
                         action = parts[3]
                         
                         if remove_stock_tracking(user_id, symbol, target_price, action):
-                            reply_text = f"✅ 已取消追蹤 {symbol} {action} 提醒"
+                            reply_text = f"✅ 已取消 {symbol} {action} 提醒"
                         else:
-                            reply_text = "❌ 取消追蹤失敗，請稍後再試"
+                            reply_text = "❌ 取消提醒失敗，請稍後再試"
                     else:
-                        reply_text = "❌ 格式錯誤\n💡 正確格式: 取消追蹤 2330 或 取消追蹤 2330 800 買進"
+                        reply_text = "❌ 格式錯誤\n💡 正確格式: 取消提醒 2330 或 取消提醒 2330 800 買進"
                 except ValueError:
-                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 取消追蹤 2330 或 取消追蹤 2330 800 買進"
+                    reply_text = "❌ 價格格式錯誤\n💡 正確格式: 取消提醒 2330 或 取消提醒 2330 800 買進"
                 except Exception as e:
-                    reply_text = f"❌ 取消追蹤失敗: {str(e)}"
+                    reply_text = f"❌ 取消提醒失敗: {str(e)}"
             
             elif user_message == '取消全部':
                 # 取消所有追蹤
